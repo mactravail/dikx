@@ -1,7 +1,9 @@
 /**
- * Chargeur `.env` minimal (sans dependance). Lit le fichier `.env` a la racine
- * s'il existe et injecte les cles ABSENTES de process.env (les variables deja
- * definies dans l'environnement restent prioritaires).
+ * Chargeur `.env` minimal (sans dependance). Lit `.env.local` puis `.env` a la
+ * racine s'ils existent et injecte les cles ABSENTES de process.env (les
+ * variables deja definies dans l'environnement restent prioritaires). Comme les
+ * cles deja presentes ne sont pas ecrasees, `.env.local` (charge en premier)
+ * surcharge `.env`, suivant la convention habituelle.
  *
  * Volontairement simple : `CLE=valeur`, lignes vides et `#` ignorees, guillemets
  * optionnels retires. Suffisant pour le dev local ; en prod, utiliser de vraies
@@ -13,10 +15,20 @@ import { resolve } from "node:path";
 
 let charge = false;
 
-export function chargerEnvLocal(fichier = ".env"): void {
+// `.env.local` d'abord (priorite), puis `.env` en repli.
+const FICHIERS_PAR_DEFAUT = [".env.local", ".env"];
+
+export function chargerEnvLocal(fichiers: string | string[] = FICHIERS_PAR_DEFAUT): void {
   if (charge) return;
   charge = true;
 
+  const liste = Array.isArray(fichiers) ? fichiers : [fichiers];
+  for (const fichier of liste) {
+    chargerFichier(fichier);
+  }
+}
+
+function chargerFichier(fichier: string): void {
   const chemin = resolve(process.cwd(), fichier);
   if (!existsSync(chemin)) return;
 
