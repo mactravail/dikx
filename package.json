@@ -1,0 +1,25 @@
+{
+  "name": "previsionnel-financier-5ans",
+  "version": "0.1.0",
+  "description": "Moteur de calcul deterministe du previsionnel financier 5 ans (Senegal / SYSCOHADA)",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx src/dev.ts",
+    "dev:web": "tsx src/web-server.ts",
+    "pdf": "tsx src/pdf-dev.ts",
+    "serve": "tsx src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "puppeteer": "^25.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>dikx — Prévisionnel financier 5 ans</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">dikx</span>
+        <span class="brand-sub">Prévisionnel financier 5 ans · Sénégal / SYSCOHADA</span>
+      </div>
+      <button type="button" id="btn-exemple" class="btn btn-ghost">Remplir avec l'exemple</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <p class="intro">
+      Renseignez votre projet ci-dessous. dikx calcule les <strong>9 tableaux financiers</strong>
+      (compte de résultat, trésorerie, plan de financement…) et les indicateurs clés
+      (seuil de rentabilité, CAF, DSCR), puis produit un dossier PDF prêt pour la banque.
+      <em>Aucun montant n'est calculé dans le navigateur : tout vient du moteur.</em>
+    </p>
+
+    <form id="form-dossier" novalidate>
+
+      <!-- ============ BLOC 0 — Identité ============ -->
+      <section class="card">
+        <h2>1. Identité du projet</h2>
+        <div class="grid">
+          <label>Nom du projet
+            <input type="text" id="nomProjet" placeholder="Ex. Boulangerie La Teranga" />
+          </label>
+          <label>Secteur d'activité
+            <input type="text" id="secteur" placeholder="Ex. Boulangerie - pâtisserie" />
+          </label>
+          <label>Forme juridique
+            <select id="formeJuridique">
+              <option value="EI">Entreprise individuelle (EI)</option>
+              <option value="SUARL">SUARL</option>
+              <option value="SARL">SARL</option>
+              <option value="SA">SA</option>
+              <option value="GIE">GIE</option>
+            </select>
+          </label>
+          <label>Mois de démarrage
+            <div class="row">
+              <select id="mois" class="mini">
+                <option value="1">Janvier</option><option value="2">Février</option>
+                <option value="3">Mars</option><option value="4">Avril</option>
+                <option value="5">Mai</option><option value="6">Juin</option>
+                <option value="7">Juillet</option><option value="8">Août</option>
+                <option value="9">Septembre</option><option value="10">Octobre</option>
+                <option value="11">Novembre</option><option value="12">Décembre</option>
+              </select>
+              <input type="number" id="annee" class="mini" min="2020" max="2100" placeholder="2026" />
+            </div>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="assujettiTVA" />
+            <span>Assujetti à la TVA (18 %)</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- ============ BLOC 1 — Investissements ============ -->
+      <section class="card">
+        <h2>2. Investissements de départ</h2>
+        <p class="hint">Matériel, aménagements, véhicules, frais de création… Montants <strong>HT</strong> en FCFA.</p>
+        <div id="liste-investissements" class="repeat"></div>
+        <button type="button" class="btn btn-add" data-add="investissement">+ Ajouter un investissement</button>
+      </section>
+
+      <!-- ============ BLOC 2 — Financement ============ -->
+      <section class="card">
+        <h2>3. Financement</h2>
+        <div class="grid">
+          <label>Apport personnel / capital
+            <input type="number" id="apportCapital" min="0" placeholder="FCFA" />
+          </label>
+          <label>Apport en compte courant
+            <input type="number" id="apportCompteCourant" min="0" placeholder="FCFA" />
+          </label>
+          <label>Subvention d'investissement
+            <input type="number" id="subvention" min="0" placeholder="FCFA" />
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="empruntActif" />
+          <span>Recours à un emprunt bancaire</span>
+        </label>
+        <div id="bloc-emprunt" class="grid subgrid" hidden>
+          <label>Montant emprunté
+            <input type="number" id="empruntMontant" min="0" placeholder="FCFA" />
+          </label>
+          <label>Taux d'intérêt annuel
+            <div class="row"><input type="number" id="empruntTaux" min="0" step="0.1" class="mini" /><span class="unit">%</span></div>
+          </label>
+          <label>Durée de remboursement
+            <div class="row"><input type="number" id="empruntDuree" min="1" class="mini" /><span class="unit">ans</span></div>
+          </label>
+          <label>Différé de remboursement
+            <div class="row"><input type="number" id="empruntDiffere" min="0" class="mini" /><span class="unit">mois</span></div>
+          </label>
+        </div>
+      </section>
+
+      <!-- ============ BLOC 3 — Chiffre d'affaires ============ -->
+      <section class="card">
+        <h2>4. Chiffre d'affaires prévisionnel</h2>
+        <div class="row radios">
+          <label class="check"><input type="radio" name="caMode" value="simple" checked /><span>Montant global (année 1)</span></label>
+          <label class="check"><input type="radio" name="caMode" value="detaille" /><span>Détail par produit / service</span></label>
+        </div>
+
+        <div id="ca-simple" class="grid">
+          <label>CA HT prévu la 1re année
+            <input type="number" id="caMontant" min="0" placeholder="FCFA" />
+          </label>
+        </div>
+
+        <div id="ca-detaille" hidden>
+          <div id="liste-produits" class="repeat"></div>
+          <button type="button" class="btn btn-add" data-add="produit">+ Ajouter un produit / service</button>
+        </div>
+
+        <div class="grid">
+          <label>Croissance annuelle du CA
+            <div class="row"><input type="number" id="caCroissance" step="0.1" class="mini" /><span class="unit">% / an</span></div>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="caSaisonnier" />
+            <span>Activité saisonnière</span>
+          </label>
+        </div>
+        <div id="bloc-saison" hidden>
+          <p class="hint">Poids relatif de chaque mois (l'année 1). Le moteur normalise automatiquement.</p>
+          <div id="repartition-mois" class="mois-grid"></div>
+        </div>
+      </section>
+
+      <!-- ============ BLOC 4 — Charges ============ -->
+      <section class="card">
+        <h2>5. Charges d'exploitation</h2>
+        <div class="grid">
+          <label>Achats de matières / marchandises
+            <div class="row">
+              <select id="achatsMode" class="mini">
+                <option value="pourcentageCA">% du CA</option>
+                <option value="montant">Montant annuel (FCFA)</option>
+              </select>
+              <input type="number" id="achatsValeur" step="0.1" class="mini" />
+            </div>
+          </label>
+          <label>Loyer mensuel <input type="number" id="loyerMensuel" min="0" placeholder="FCFA / mois" /></label>
+          <label>Eau &amp; électricité mensuel <input type="number" id="eauElectriciteMensuel" min="0" placeholder="FCFA / mois" /></label>
+          <label>Télécom / internet mensuel <input type="number" id="telecomMensuel" min="0" placeholder="FCFA / mois" /></label>
+          <label>Transport / carburant annuel <input type="number" id="transportCarburantAnnuel" min="0" placeholder="FCFA / an" /></label>
+          <label>Assurances annuel <input type="number" id="assurancesAnnuel" min="0" placeholder="FCFA / an" /></label>
+          <label>Honoraires annuel <input type="number" id="honorairesAnnuel" min="0" placeholder="FCFA / an" /></label>
+          <label>Marketing / publicité annuel <input type="number" id="marketingAnnuel" min="0" placeholder="FCFA / an" /></label>
+          <label>Entretien / divers annuel <input type="number" id="entretienDiversAnnuel" min="0" placeholder="FCFA / an" /></label>
+          <label>Impôts &amp; taxes annuel <input type="number" id="impotsTaxesAnnuel" min="0" placeholder="FCFA / an" /></label>
+        </div>
+      </section>
+
+      <!-- ============ BLOC 5 — Personnel ============ -->
+      <section class="card">
+        <h2>6. Personnel &amp; salaires</h2>
+        <div id="liste-personnel" class="repeat"></div>
+        <button type="button" class="btn btn-add" data-add="personnel">+ Ajouter un poste</button>
+        <label class="check" style="margin-top:14px">
+          <input type="checkbox" id="dirigeantActif" />
+          <span>Le dirigeant se verse un salaire</span>
+        </label>
+        <div id="bloc-dirigeant" class="grid subgrid" hidden>
+          <label>Salaire brut mensuel du dirigeant
+            <input type="number" id="dirigeantMontant" min="0" placeholder="FCFA / mois" />
+          </label>
+        </div>
+      </section>
+
+      <!-- ============ BLOC 6 — Délais BFR ============ -->
+      <section class="card">
+        <h2>7. Délais (besoin en fonds de roulement)</h2>
+        <div class="grid">
+          <label>Délai de paiement clients
+            <div class="row"><input type="number" id="delaiClients" min="0" class="mini" /><span class="unit">jours</span></div>
+          </label>
+          <label>Délai de paiement fournisseurs
+            <div class="row"><input type="number" id="delaiFournisseurs" min="0" class="mini" /><span class="unit">jours</span></div>
+          </label>
+          <label>Durée de stockage
+            <div class="row"><input type="number" id="delaiStock" min="0" class="mini" /><span class="unit">jours</span></div>
+          </label>
+        </div>
+      </section>
+
+      <!-- ============ BLOC 7 — Paramètres fiscaux (optionnel) ============ -->
+      <section class="card">
+        <details>
+          <summary>8. Paramètres fiscaux (optionnel)</summary>
+          <p class="hint">Laissez vide pour utiliser les taux par défaut du moteur (à valider par un expert).</p>
+          <div class="grid">
+            <label>Taux de TVA
+              <div class="row"><input type="number" id="tauxTVA" step="0.1" class="mini" /><span class="unit">%</span></div>
+            </label>
+            <label>Taux d'IS
+              <div class="row"><input type="number" id="tauxIS" step="0.1" class="mini" /><span class="unit">%</span></div>
+            </label>
+            <label>Charges sociales patronales
+              <div class="row"><input type="number" id="tauxCharges" step="0.1" class="mini" /><span class="unit">%</span></div>
+            </label>
+          </div>
+        </details>
+      </section>
+
+      <div class="actions-bar">
+        <button type="submit" class="btn btn-primary btn-lg">Générer le prévisionnel</button>
+      </div>
+    </form>
+
+    <!-- ============ Résultats ============ -->
+    <section id="resultats" class="card resultats" hidden>
+      <div class="resultats-head">
+        <h2 id="res-titre">Résultats</h2>
+        <div class="resultats-actions">
+          <button type="button" id="btn-html" class="btn btn-ghost">Voir le dossier complet</button>
+          <button type="button" id="btn-pdf" class="btn btn-primary">Télécharger le PDF</button>
+        </div>
+      </div>
+      <div id="res-alertes"></div>
+      <div id="res-cartes" class="cartes"></div>
+      <p class="hint" id="res-note"></p>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

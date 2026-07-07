@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>dikx — Connexion</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="auth-body">
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">dikx</span>
+        <span class="brand-sub">Prévisionnel financier 5 ans · Sénégal / SYSCOHADA</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="auth-main">
+    <section class="auth-card card">
+      <h1 class="auth-title" id="auth-title">Connexion</h1>
+      <p class="auth-lead" id="auth-lead">
+        Accédez à vos dossiers prévisionnels et générez votre PDF.
+      </p>
+
+      <!-- Onglets Connexion / Inscription -->
+      <div class="auth-tabs" role="tablist" aria-label="Connexion ou inscription">
+        <button type="button" class="auth-tab is-active" id="tab-login" role="tab" aria-selected="true" data-mode="login">Se connecter</button>
+        <button type="button" class="auth-tab" id="tab-signup" role="tab" aria-selected="false" data-mode="signup">Créer un compte</button>
+      </div>
+
+      <form id="auth-form" novalidate>
+        <!-- Nom : inscription uniquement -->
+        <label class="auth-field" id="field-nom" hidden>Nom complet
+          <input type="text" id="nom" name="nom" autocomplete="name" placeholder="Ex. Awa Diop" />
+        </label>
+
+        <label class="auth-field">Adresse email
+          <input type="email" id="email" name="email" autocomplete="email" placeholder="vous@exemple.com" required />
+        </label>
+
+        <label class="auth-field">Mot de passe
+          <div class="row auth-pass">
+            <input type="password" id="password" name="password" autocomplete="current-password" placeholder="••••••••" required />
+            <button type="button" class="auth-eye" id="toggle-pass" aria-label="Afficher le mot de passe">Afficher</button>
+          </div>
+          <span class="auth-help" id="pass-help" hidden>8 caractères minimum.</span>
+        </label>
+
+        <!-- Confirmation : inscription uniquement -->
+        <label class="auth-field" id="field-confirm" hidden>Confirmer le mot de passe
+          <input type="password" id="confirm" name="confirm" autocomplete="new-password" placeholder="••••••••" />
+        </label>
+
+        <!-- Ligne d'options : connexion uniquement -->
+        <div class="auth-row-options" id="row-options">
+          <label class="check auth-remember">
+            <input type="checkbox" id="remember" checked />
+            <span>Se souvenir de moi</span>
+          </label>
+          <a href="#" class="auth-link" id="link-forgot">Mot de passe oublié ?</a>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg auth-submit" id="submit">Se connecter</button>
+      </form>
+
+      <p class="auth-switch">
+        <span id="switch-text">Pas encore de compte ?</span>
+        <a href="#" class="auth-link" id="switch-link">Créer un compte</a>
+      </p>
+    </section>
+
+    <p class="auth-legal">
+      En continuant, vous acceptez que dikx traite vos données pour produire votre dossier financier.
+    </p>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/login.js"></script>
+</body>
+</html>
