@@ -1,0 +1,8 @@
+# Ne jamais uploader les secrets / fichiers locaux vers Vercel
+.env
+.env.local
+.env.*.local
+.vercel
+node_modules
+coverage
+tests
