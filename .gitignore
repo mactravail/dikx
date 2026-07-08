@@ -7,3 +7,13 @@ out/
 !.env.example
 coverage/
 .DS_Store
+
+# Next.js
+.next/
+next-env.d.ts
+.turbo/
+
+# TypeScript
+*.tsbuildinfo
+
+.vercel

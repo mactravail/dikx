@@ -1,4 +1,4 @@
-/* dikx — logique de l'app web (aucune dépendance).
+/* raktak — logique de l'app web (aucune dépendance).
  *
  * Rôle : collecter les réponses, construire le DossierInput, l'envoyer au moteur
  * via l'API, et afficher ce qu'il renvoie. AUCUN chiffre du dossier n'est calculé ici. */
@@ -485,7 +485,7 @@ async function telechargerPDF() {
     const url = URL.createObjectURL(await r.blob());
     const a = document.createElement("a");
     a.href = url;
-    a.download = "previsionnel-dikx.pdf";
+    a.download = "previsionnel-raktak.pdf";
     document.body.appendChild(a);
     a.click();
     a.remove();

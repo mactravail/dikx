@@ -1,11 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build && mkdir -p public && printf 'User-agent: *\\nAllow: /\\n' > public/robots.txt",
-  "outputDirectory": "public",
-  "functions": {
-    "api/index.ts": {
-      "includeFiles": "web/**"
-    }
-  },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
+  "framework": "nextjs"
 }

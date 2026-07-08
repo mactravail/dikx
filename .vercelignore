@@ -6,3 +6,8 @@
 node_modules
 coverage
 tests
+
+# Ancien socle (remplace par l'app Next.js). Conserve dans le repo mais non
+# deploye : evite que Vercel traite api/ comme une fonction serverless a part.
+api
+web

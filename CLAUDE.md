@@ -1,131 +1,136 @@
-# CLAUDE.md — App « dikx » : Prévisionnel Financier 5 ans
+# CLAUDE.md — App « raktak » : ERP de gestion d'entreprise (Sénégal / SYSCOHADA)
 
 ## Vue d'ensemble
 
-Produit : **dikx**, une **application** qui génère un **dossier financier prévisionnel sur 5 ans**
-pour des entrepreneurs au **Sénégal**. L'utilisateur saisit ses réponses **soit dans l'app dikx
-(web/mobile)** — interface principale — **soit via WhatsApp** (canal secondaire). Le système
-produit un **PDF** (les 9 tableaux financiers), consultable dans l'app et envoyé par **email**.
+Produit : **raktak**, une **application de gestion d'entreprise (ERP)** pour des entrepreneurs et
+PME au **Sénégal**, référentiel **SYSCOHADA révisé**, devise **FCFA (XOF)**. L'app est organisée en
+**modules** accessibles depuis un **tableau de bord unifié**.
 
-Périmètre **v1** = UNIQUEMENT ce générateur de prévisionnel, livré comme une **app** avec deux
-canaux de collecte (app + WhatsApp).
-**Hors scope v1** (ne PAS construire) : l'ERP comptable, la paie, les modules fiscaux,
-la comptabilité quotidienne. On ne touche pas à ça pour l'instant.
+Le **premier module, opérationnel**, est le **Prévisionnel financier 5 ans** (les 9 tableaux + les
+indicateurs bancaires). Les autres modules sont en construction progressive :
 
-## Règles critiques (non négociables)
+- **Ventes** : Facturation (devis/factures/avoirs), Clients, Ventes & CRM.
+- **Achats & Stock** : Achats, Fournisseurs, Stocks (matières premières + produits finis),
+  Production / MRP.
+- **Finance** : Comptabilité (plan comptable SYSCOHADA, journal, grand livre, balance),
+  Charges & Dépenses.
+- **Organisation** : Ressources humaines (paie), Projets & Tâches.
 
-1. **Ni l'IA ni le frontend ne calculent JAMAIS un chiffre du dossier.** L'IA sert à la
-   conversation WhatsApp, l'app sert à la saisie ; TOUS les montants viennent du **moteur de
-   calcul déterministe et testé** (backend).
-2. **L'argent est manipulé en FCFA entiers** (XOF, 0 décimale). Pas de float naïf pour les
-   sommes finales. Politique d'arrondi définie et centralisée (voir Conventions).
+Canaux de collecte : l'**app raktak** (interface principale) et **WhatsApp** (canal secondaire, via
+n8n, pour le prévisionnel). Le workflow n8n n'est pas construit dans ce repo.
+
+> Historique : l'app a démarré comme un générateur de prévisionnel seul. La direction produit est
+> désormais un **ERP modulaire** ; le prévisionnel en est le module d'ancrage.
+
+## Règles critiques (non négociables — valables pour TOUS les modules)
+
+1. **Ni l'IA ni le frontend ne calculent JAMAIS un chiffre.** Tout montant du produit
+   (prévisionnel, facture, TVA, valorisation de stock, écriture comptable, paie, MRP) vient d'un
+   **moteur de calcul déterministe et testé**, exécuté **côté serveur** (moteur `src/` ou server
+   action / route). Le frontend collecte et affiche ; il ne calcule pas.
+2. **L'argent est manipulé en FCFA entiers** (XOF, 0 décimale). Pas de float naïf pour les sommes
+   finales. Arrondi centralisé via `arrondiFCFA()` (voir Conventions).
 3. **Aucun taux fiscal ou social en dur dans le code.** Tout taux (TVA, IS, charges sociales,
-   durées d'amortissement) vit dans `src/config/parametres.ts`, paramétrable, marqué
-   « à valider par un expert ». Le frontend n'embarque aucun taux : il lit ce que le backend expose.
+   durées d'amortissement, barèmes de paie…) vit dans `src/config/parametres.ts`, paramétrable,
+   marqué « à valider par un expert ». Le frontend n'embarque aucun taux : il lit ce que le backend
+   expose.
 4. **WhatsApp = API officielle Business Cloud uniquement.** Jamais de solution non officielle
    (risque de bannissement du numéro).
-5. **Tout calcul financier doit avoir des tests unitaires** avec des cas d'entrée/sortie connus.
+5. **Tout calcul financier doit avoir des tests unitaires** (Vitest) avec des cas d'entrée/sortie
+   vérifiés à la main. Pas de fonctionnalité touchant un montant sans test.
 
 ## Architecture
 
-L'app dikx a **deux canaux de collecte** qui alimentent **un seul moteur de calcul**.
+- **App raktak (CE REPO)** — application **Next.js (App Router)** : tableau de bord + tous les
+  modules. Rendu serveur + server actions qui appellent le moteur. Auth et données dans **Supabase**.
+- **Moteur de calcul (CE REPO, `src/`)** — TypeScript **pur et déterministe** : entrée JSON →
+  sortie JSON. Réutilisé tel quel par l'app (et par n8n via une éventuelle API). C'est le cœur.
+- **Rendu** — HTML → PDF (prévisionnel, factures…) + affichage dans l'app.
+- **WhatsApp (via n8n) — canal secondaire** : conversation IA qui collecte les réponses du
+  prévisionnel. Construit dans l'UI n8n, pas ici.
 
-1. **Collecte — 2 canaux :**
-   - **App dikx (web/mobile) — interface principale (CE REPO)** : formulaire guidé, saisie des
-     réponses, suivi de l'avancement, consultation et téléchargement du PDF.
-   - **WhatsApp (via n8n) — canal secondaire** : conversation IA qui collecte les mêmes réponses.
-     Le workflow est construit dans n8n, pas ici.
-2. **Calcul (CE REPO)** — moteur déterministe : entrée = JSON des réponses, sortie = JSON des
-   9 tableaux. **Partagé par les deux canaux.** C'est le cœur du produit.
-3. **Rendu (CE REPO)** — données → PDF → email, + affichage dans l'app.
+**Ce que Claude Code construit dans ce repo :** le frontend Next.js de tous les modules, les server
+actions / API exposant le moteur, le **moteur de calcul par module + ses tests**, le modèle de
+données (types + migrations Supabase), la génération PDF, le schéma SQL.
 
-L'app et n8n appellent le même moteur via une **API HTTP** (ou Edge Function Supabase). Les
-comptes utilisateurs, l'état des dossiers et des conversations sont stockés dans **Supabase**
-(Postgres + Auth).
-
-**Ce que Claude Code construit dans ce repo :**
-- le **frontend de l'app dikx** (web/mobile) — saisie, suivi, consultation du PDF
-- l'**API HTTP** qui expose le moteur (appelée par l'app ET par n8n)
-- le modèle de données (types entrée/sortie)
-- le moteur de calcul + ses tests
-- la génération PDF
-- le schéma Supabase (SQL) pour stocker réponses, état de conversation, comptes
-- (optionnel) le prompt système de l'agent WhatsApp
-
-**Ce que Claude Code ne construit PAS :** le workflow n8n lui-même (fait dans l'UI n8n).
+**Ce que Claude Code ne construit PAS :** le workflow n8n lui-même.
 
 ## Stack
 
-- **Langage : TypeScript** (backend), **HTML/CSS/JS** (frontend), cohérent avec n8n/Node et Supabase.
-- **Frontend app (v1) : statique, zéro dépendance** (HTML/CSS/JS dans `/web`), servi par le
-  serveur Node. App web **responsive** couvrant desktop et mobile. Migration vers React/Next.js
-  ou app native (React Native / Expo) possible plus tard si le besoin le justifie.
-- **Backend / API :** Node.js LTS — serveur `src/web-server.ts` (module http natif) qui sert le
-  frontend ET expose l'API du moteur. Une Edge Function Supabase peut prendre le relais en prod.
-- **Tests :** Vitest.
-- **Base : Supabase** (Postgres + Auth). Schéma versionné en SQL.
-- **PDF :** template HTML → PDF.
+- **Langage : TypeScript** partout.
+- **Frontend / app : Next.js 16 (App Router) + React 19 + Tailwind CSS v4.** Responsive
+  (desktop + mobile). Composants dans `/components`, pages dans `/app`.
+- **Moteur : TypeScript pur** dans `/src` (aucune dépendance UI/serveur ; importable partout).
+- **Base : Supabase** (Postgres + Auth). Schéma versionné en SQL dans `/db/migrations`.
+  Accès backend via `service_role` ; RLS deny-by-default.
+- **Tests : Vitest** (moteur).
+- **PDF :** template HTML → PDF (Puppeteer en local ; à déporter en prod serverless).
+- **Déploiement : Vercel** (framework `nextjs`, zéro config de routing custom).
 
 ## Structure du projet
 
 ```
-/web           frontend statique de l'app dikx : index.html, app.js, styles.css
-               (formulaire guidé -> résultats -> PDF ; n'embarque aucun taux, ne calcule rien)
-/src
-  /types         interfaces TypeScript : DossierInput, DossierOutput, les 9 tableaux
-  /config        parametres.ts — TOUS les taux paramétrables (TVA, IS, social, amortissement)
-  /engine        un fichier par calcul :
-                   amortissements.ts, emprunt.ts, resultat.ts, sig.ts,
-                   bfr.ts, tresorerie.ts, indicateurs.ts
-  /api           ports (interfaces) de la couche API — ports & adapters
-  /pdf           génération du PDF
-  web-server.ts  serveur : sert /web + API HTTP du moteur (/api/dossier[/html|/pdf])
-  index.ts       point d'entrée : DossierInput -> DossierOutput
-/tests           tests unitaires par calcul
-/db              migrations SQL Supabase
+/app                      Next.js App Router
+  layout.tsx              layout racine (html/body + globals.css)
+  (app)/                  groupe de routes de l'ERP (sidebar + topbar partagés)
+    layout.tsx            -> <AppShell>
+    page.tsx              tableau de bord (accueil)
+    previsionnel/         module Prévisionnel : page + actions.ts (server action -> moteur)
+    facturation/ clients/ crm/ achats/ fournisseurs/ stocks/ production/
+    comptabilite/ charges/ rh/ projets/   (modules — pages en construction)
+/components                UI React : AppShell, Sidebar, ui.tsx, icons.tsx,
+                           ModulePlaceholder, previsionnel/PrevisionnelClient
+/lib                       nav.ts (navigation), format.ts (affichage FCFA), engine.ts (pont moteur)
+/src                       MOTEUR pur (inchangé, réutilisé par l'app)
+  /types /config /engine /pdf   + index.ts (genererDossier) + examples/
+/tests                     tests unitaires Vitest du moteur
+/db/migrations             SQL Supabase (0001 prévisionnel, 0002 facturation, …)
 ```
+
+Ancien socle (avant migration Next.js) conservé mais **non déployé** (voir `.vercelignore`) :
+`/web` (statique), `api/index.ts`, `src/web-server.ts`, `src/server.ts`. À supprimer une fois la
+migration stabilisée.
 
 ## Conventions
 
 - **Code en anglais** (noms de variables, fonctions), **commentaires en français** acceptés.
-- **Argent :** un type `FCFA = number` représentant des entiers. Les calculs intermédiaires
-  (intérêts, amortissements) peuvent produire des décimales ; on arrondit à l'entier FCFA
-  **uniquement au moment de produire chaque ligne de sortie**, via une fonction unique
-  `arrondiFCFA()`. Documenter chaque endroit où un arrondi a lieu.
-- **Pur et déterministe :** les fonctions du moteur ne font pas d'I/O, pas d'appel réseau,
-  pas d'aléatoire. Entrée -> sortie, point. Le **frontend ne fait aucun calcul financier** : il
-  envoie les réponses au moteur et affiche les résultats reçus.
-- **Tests d'abord pour les calculs financiers** : pour chaque calcul, écrire un test avec un
-  exemple chiffré validé à la main AVANT d'implémenter.
+- **Un module = un dossier** sous `app/(app)/<module>` (page) + éventuellement
+  `components/<module>/` (UI) + un **moteur par calcul** sous `src/engine/` + tests.
+- **Le frontend n'importe le moteur QUE via `lib/engine.ts`** (un seul point d'entrée serveur).
+- **Argent :** type `FCFA = number` (entiers). Les intermédiaires peuvent être décimaux ; arrondi à
+  l'entier FCFA **uniquement au moment de produire chaque ligne de sortie**, via `arrondiFCFA()`.
+- **Pur et déterministe :** les fonctions du moteur ne font pas d'I/O, pas de réseau, pas d'aléatoire.
+- **Tests d'abord pour les calculs financiers** : écrire le test chiffré avant d'implémenter.
+- **Stockage des totaux :** les tables stockent le **snapshot** calculé par le moteur (jamais un
+  total calculé par l'UI).
 
 ## Domaine (Sénégal / OHADA)
 
 - Référentiel **SYSCOHADA révisé**, devise **FCFA (XOF)**, **TVA 18 %**.
-- Les 9 tableaux de sortie : T1 Investissements & financements · T2 Amortissements ·
+- Prévisionnel — 9 tableaux : T1 Investissements & financements · T2 Amortissements ·
   T3 Échéancier d'emprunt · T4 Salaires & charges sociales · T5 Compte de résultat 5 ans ·
   T6 SIG (% du CA) · T7 BFR · T8 Plan de financement 5 ans · T9 Budget de trésorerie 12 mois.
-- Indicateurs : seuil de rentabilité, CAF, **DSCR** (le ratio que regarde le banquier), ratios.
-- **La liste exacte des questions et ce que chacune alimente est dans
-  `docs/flux-questions-previsionnel-5ans.md`.** Le modèle d'entrée (`DossierInput`) DOIT
-  correspondre à ce document.
+  Indicateurs : seuil de rentabilité, CAF, **DSCR**. Modèle d'entrée = `flux-questions-previsionnel-5ans.md`.
 
 ## Commandes
 
-- `npm test` — lancer tous les tests
-- `npm run dev` — exécuter le moteur sur un jeu de données d'exemple
-- `npm run dev:web` — lancer l'app dikx (frontend) en local
-- `npm run build` — compiler
+- `npm run dev` — lancer l'app raktak (Next.js) en local
+- `npm run build` — build de production Next.js
+- `npm start` — servir le build
+- `npm test` — lancer tous les tests du moteur (Vitest)
+- `npm run typecheck` — vérification de types (app + moteur)
+- `npm run engine:demo` — exécuter le moteur sur un jeu d'exemple (prévisionnel)
 
 ## À ne pas faire
 
-- Ne pas calculer de montants côté LLM/IA **ni côté frontend**.
-- Ne pas coder de taux fiscaux/sociaux en dur (toujours via `src/config/parametres.ts`) — le
-  frontend non plus.
-- Ne pas commencer l'ERP, la paie ou les modules fiscaux (hors scope v1).
+- Ne pas calculer de montants côté LLM/IA **ni côté frontend** (toujours via le moteur serveur).
+- Ne pas coder de taux fiscaux/sociaux en dur (toujours via `src/config/parametres.ts`).
 - Ne pas utiliser d'API WhatsApp non officielle.
-- Ne pas ajouter une fonctionnalité sans test si elle touche un chiffre du dossier.
+- Ne pas ajouter une fonctionnalité sans test si elle touche un chiffre.
+- Ne pas stocker en base un total calculé par l'UI (seulement le snapshot du moteur).
 
 ## Définition de « terminé »
 
-Une tâche de calcul est terminée quand : la fonction est pure, ses tests passent avec des
-valeurs attendues vérifiées à la main, et tout arrondi/taux est documenté et paramétrable.
+Un module/calcul est terminé quand : la (les) fonction(s) de calcul sont pures et testées avec des
+valeurs vérifiées à la main, tout arrondi/taux est documenté et paramétrable, l'UI collecte/affiche
+sans calculer, et les données persistent correctement dans Supabase.

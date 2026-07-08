@@ -1,5 +1,5 @@
 /**
- * Point d'entree serverless Vercel de l'app dikx.
+ * Point d'entree serverless Vercel de l'app raktak.
  *
  * Toutes les routes sont reecrites vers cette fonction (voir `vercel.json`) : on
  * delegue au handler unique de l'app (`src/web-server.ts`), le meme code qui tourne

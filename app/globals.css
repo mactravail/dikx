@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Design tokens raktak — un seul systeme de couleurs pour tout l'ERP  */
+/* ------------------------------------------------------------------ */
+@theme {
+  --color-brand-50: #eef4fb;
+  --color-brand-100: #d7e5f5;
+  --color-brand-200: #b3cded;
+  --color-brand-300: #7fa9db;
+  --color-brand-400: #4d82c4;
+  --color-brand-500: #2b62a8;
+  --color-brand-600: #1d4e89;
+  --color-brand-700: #163d6b;
+  --color-brand-800: #12314f;
+  --color-brand-900: #0f2340;
+
+  --color-sidebar: #0f2340;
+  --color-sidebar-alt: #12314f;
+  --color-sidebar-hover: #1b3a63;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-slate-50, #f8fafc);
+  color: #1e293b;
+  -webkit-font-smoothing: antialiased;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* Barre de defilement discrete pour la sidebar */
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Impression — n'imprimer que le document du rapport financier        */
+/* ------------------------------------------------------------------ */
+@media print {
+  /* Masque toute l'interface (sidebar, topbar, barre d'outils du rapport). */
+  body * {
+    visibility: hidden;
+  }
+  .rapport-print,
+  .rapport-print * {
+    visibility: visible;
+  }
+  .rapport-print {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  /* Elements purement d'edition : jamais imprimes. */
+  .no-print {
+    display: none !important;
+  }
+  /* Evite de couper une carte / un tableau au milieu d'une page. */
+  .print-avoid-break {
+    break-inside: avoid;
+  }
+  /* Les zones de saisie du narratif s'impriment comme du texte plat. */
+  .rapport-print textarea,
+  .rapport-print input {
+    border-color: transparent !important;
+    box-shadow: none !important;
+    resize: none;
+  }
+  @page {
+    margin: 16mm 14mm;
+  }
+}

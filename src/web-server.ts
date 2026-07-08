@@ -1,12 +1,12 @@
 /**
- * Serveur de l'app dikx — version web (interface principale).
+ * Serveur de l'app raktak — version web (interface principale).
  *
  * Sert le frontend statique (/web) et expose l'API HTTP qui appelle le moteur.
  * Le frontend ne calcule AUCUN chiffre : il collecte les reponses, les envoie
  * ici, et affiche ce que le moteur renvoie. Aucun taux n'est embarque cote client.
  *
  *   GET  /                    -> landing page (landing.html)
- *   GET  /app                 -> app dikx (formulaire guide, index.html)
+ *   GET  /app                 -> app raktak (formulaire guide, index.html)
  *   GET  /login               -> page de connexion (login.html)
  *   POST /api/auth/login      -> { email, password } -> session (cookie httpOnly)
  *   POST /api/auth/signup     -> { email, password, nom? } -> creation de compte
@@ -100,9 +100,9 @@ function poserCookieSession(res: ServerResponse, session: Session): void {
   const commun = "Path=/; HttpOnly; SameSite=Lax";
   res.setHeader("Set-Cookie", [
     // access token : courte duree (~1h cote Supabase).
-    `dikx_session=${encodeURIComponent(session.accessToken)}; ${commun}; Max-Age=3600`,
+    `raktak_session=${encodeURIComponent(session.accessToken)}; ${commun}; Max-Age=3600`,
     // refresh token : plus long, pour renouveler la session (7 jours).
-    `dikx_refresh=${encodeURIComponent(session.refreshToken)}; ${commun}; Max-Age=604800`,
+    `raktak_refresh=${encodeURIComponent(session.refreshToken)}; ${commun}; Max-Age=604800`,
   ]);
 }
 
@@ -176,7 +176,7 @@ async function servirStatique(chemin: string, res: ServerResponse): Promise<bool
 }
 
 /**
- * Handler HTTP de l'app dikx. Signature `(req, res)` standard de Node : utilisable
+ * Handler HTTP de l'app raktak. Signature `(req, res)` standard de Node : utilisable
  * tel quel par `http.createServer` (dev local / hebergement Node) ET comme fonction
  * serverless Vercel (voir `api/index.ts`). Point d'entree unique de toutes les routes.
  */
@@ -188,7 +188,7 @@ export const handler = async (req: IncomingMessage, res: ServerResponse): Promis
     // ---- API : authentification (login / signup / reset) ----
     if (methode === "POST" && (await traiterAuth(chemin, req, res))) return;
 
-    // ---- App dikx / formulaire guide (URL propre) ----
+    // ---- App raktak / formulaire guide (URL propre) ----
     if (methode === "GET" && chemin === "/app") {
       if (await servirStatique("/index.html", res)) return;
     }
@@ -232,7 +232,7 @@ export const handler = async (req: IncomingMessage, res: ServerResponse): Promis
         const pdf = await genererPDF(dossier);
         res.writeHead(200, {
           "content-type": "application/pdf",
-          "content-disposition": 'inline; filename="previsionnel-dikx.pdf"',
+          "content-disposition": 'inline; filename="previsionnel-raktak.pdf"',
         });
         res.end(Buffer.from(pdf));
       } catch (e) {
@@ -256,7 +256,7 @@ export const handler = async (req: IncomingMessage, res: ServerResponse): Promis
 export function demarrerServeur(port: number = PORT): import("node:http").Server {
   const server = createServer(handler);
   server.listen(port, () => {
-    console.log(`App dikx (web) prete : http://localhost:${port}`);
+    console.log(`App raktak (web) prete : http://localhost:${port}`);
   });
   return server;
 }
