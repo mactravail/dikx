@@ -1,4 +1,4 @@
-/* dikx — landing page. S'appuie sur styles.css (variables :root, .btn, .topbar, .wrap).
+/* raktak — landing page. S'appuie sur styles.css (variables :root, .btn, .topbar, .wrap).
    Ne contient que les styles propres à la page d'accueil marketing. Aucune dépendance. */
 
 .landing { background: var(--carte); }

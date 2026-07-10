@@ -1,12 +1,12 @@
 /**
- * Serveur de l'app dikx — version web (interface principale).
+ * Serveur de l'app raktak — version web (interface principale).
  *
  * Sert le frontend statique (/web) et expose l'API HTTP qui appelle le moteur.
  * Le frontend ne calcule AUCUN chiffre : il collecte les reponses, les envoie
  * ici, et affiche ce que le moteur renvoie. Aucun taux n'est embarque cote client.
  *
  *   GET  /                    -> landing page (landing.html)
- *   GET  /app                 -> app dikx (formulaire guide, index.html)
+ *   GET  /app                 -> app raktak (formulaire guide, index.html)
  *   GET  /login               -> page de connexion (login.html)
  *   POST /api/auth/login      -> { email, password } -> session (cookie httpOnly)
  *   POST /api/auth/signup     -> { email, password, nom? } -> creation de compte
@@ -22,7 +22,8 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve, extname, sep } from "node:path";
 
 import { chargerEnvLocal } from "./config/env.js";
@@ -41,7 +42,23 @@ import {
 
 chargerEnvLocal();
 
-const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "web");
+/**
+ * Localise le dossier `/web`. Robuste selon l'environnement :
+ * - en local (`tsx`/`node` lance depuis la racine), il est sous le cwd ;
+ * - sur une plateforme serverless (Vercel), on l'embarque via `includeFiles`
+ *   et il se retrouve a la racine du bundle (cwd = `/var/task`).
+ * On teste plusieurs candidats et on garde le premier qui existe.
+ */
+function trouverWebDir(): string {
+  const candidats = [
+    process.env.WEB_DIR,
+    resolve(process.cwd(), "web"),
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "web"),
+  ].filter((c): c is string => Boolean(c));
+  return candidats.find((c) => existsSync(c)) ?? candidats[candidats.length - 1]!;
+}
+
+const WEB_DIR = trouverWebDir();
 const PORT = Number(process.env.PORT ?? 3000);
 
 const MIME: Record<string, string> = {
@@ -55,6 +72,15 @@ const MIME: Record<string, string> = {
 
 /** Concatene le corps de la requete et le parse en JSON (objet vide si vide). */
 async function lireCorpsJSON(req: IncomingMessage): Promise<unknown> {
+  // Certaines plateformes serverless (Vercel) parsent deja le corps et l'exposent
+  // sur `req.body` en consommant le flux : on l'utilise tel quel s'il est present.
+  const corpsPreParse = (req as { body?: unknown }).body;
+  if (corpsPreParse !== undefined && corpsPreParse !== null) {
+    if (typeof corpsPreParse === "string") {
+      return corpsPreParse ? JSON.parse(corpsPreParse) : {};
+    }
+    return corpsPreParse;
+  }
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   const brut = Buffer.concat(chunks).toString("utf-8");
@@ -74,9 +100,9 @@ function poserCookieSession(res: ServerResponse, session: Session): void {
   const commun = "Path=/; HttpOnly; SameSite=Lax";
   res.setHeader("Set-Cookie", [
     // access token : courte duree (~1h cote Supabase).
-    `dikx_session=${encodeURIComponent(session.accessToken)}; ${commun}; Max-Age=3600`,
+    `raktak_session=${encodeURIComponent(session.accessToken)}; ${commun}; Max-Age=3600`,
     // refresh token : plus long, pour renouveler la session (7 jours).
-    `dikx_refresh=${encodeURIComponent(session.refreshToken)}; ${commun}; Max-Age=604800`,
+    `raktak_refresh=${encodeURIComponent(session.refreshToken)}; ${commun}; Max-Age=604800`,
   ]);
 }
 
@@ -149,7 +175,12 @@ async function servirStatique(chemin: string, res: ServerResponse): Promise<bool
   }
 }
 
-const server = createServer(async (req, res) => {
+/**
+ * Handler HTTP de l'app raktak. Signature `(req, res)` standard de Node : utilisable
+ * tel quel par `http.createServer` (dev local / hebergement Node) ET comme fonction
+ * serverless Vercel (voir `api/index.ts`). Point d'entree unique de toutes les routes.
+ */
+export const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
   const chemin = (req.url ?? "/").split("?")[0] ?? "/";
   const methode = (req.method ?? "GET").toUpperCase();
 
@@ -157,7 +188,7 @@ const server = createServer(async (req, res) => {
     // ---- API : authentification (login / signup / reset) ----
     if (methode === "POST" && (await traiterAuth(chemin, req, res))) return;
 
-    // ---- App dikx / formulaire guide (URL propre) ----
+    // ---- App raktak / formulaire guide (URL propre) ----
     if (methode === "GET" && chemin === "/app") {
       if (await servirStatique("/index.html", res)) return;
     }
@@ -201,7 +232,7 @@ const server = createServer(async (req, res) => {
         const pdf = await genererPDF(dossier);
         res.writeHead(200, {
           "content-type": "application/pdf",
-          "content-disposition": 'inline; filename="previsionnel-dikx.pdf"',
+          "content-disposition": 'inline; filename="previsionnel-raktak.pdf"',
         });
         res.end(Buffer.from(pdf));
       } catch (e) {
@@ -219,8 +250,29 @@ const server = createServer(async (req, res) => {
   } catch (e) {
     envoyerJSON(res, 500, { ok: false, error: (e as Error).message });
   }
-});
+};
 
-server.listen(PORT, () => {
-  console.log(`App dikx (web) prete : http://localhost:${PORT}`);
-});
+/** Demarre un serveur HTTP persistant (dev local, ou hebergement Node classique). */
+export function demarrerServeur(port: number = PORT): import("node:http").Server {
+  const server = createServer(handler);
+  server.listen(port, () => {
+    console.log(`App raktak (web) prete : http://localhost:${port}`);
+  });
+  return server;
+}
+
+// Ne demarre le serveur QUE si ce fichier est execute directement (npm run dev:web).
+// Quand il est seulement importe (fonction serverless Vercel), on n'ecoute aucun
+// port : la plateforme invoque `handler` requete par requete.
+function estPointEntree(): boolean {
+  try {
+    const arg = process.argv[1];
+    return Boolean(arg) && import.meta.url === pathToFileURL(arg!).href;
+  } catch {
+    return false;
+  }
+}
+
+if (estPointEntree()) {
+  demarrerServeur();
+}

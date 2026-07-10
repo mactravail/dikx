@@ -1,4 +1,4 @@
-/* dikx — page de connexion (aucune dépendance).
+/* raktak — page de connexion (aucune dépendance).
  *
  * Rôle : collecter email + mot de passe, les envoyer au serveur qui parle à
  * Supabase Auth (le navigateur ne voit JAMAIS de clé Supabase), puis rediriger
@@ -35,7 +35,7 @@ const TEXTES = {
   },
   signup: {
     title: "Créer un compte",
-    lead: "Créez votre compte dikx pour bâtir votre prévisionnel 5 ans.",
+    lead: "Créez votre compte raktak pour bâtir votre prévisionnel 5 ans.",
     submit: "Créer mon compte",
     switchText: "Vous avez déjà un compte ?",
     switchLink: "Se connecter",

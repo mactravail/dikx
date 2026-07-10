@@ -1,0 +1,16 @@
+# Ne jamais uploader les secrets / fichiers locaux vers Vercel
+.env
+.env.local
+.env.*.local
+.vercel
+node_modules
+coverage
+/tests
+
+# Ancien socle (remplace par l'app Next.js). Conserve dans le repo mais non
+# deploye : evite que Vercel traite api/ comme une fonction serverless a part.
+# IMPORTANT : ancrer a la racine avec "/". Sans le "/", "api" matcherait AUSSI
+# src/api/ (semantique gitignore : un pattern sans slash matche a toute
+# profondeur) -> src/api/ports.ts absent du build Vercel -> "Cannot find module".
+/api
+/web

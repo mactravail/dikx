@@ -38,6 +38,19 @@ export interface Parametres {
     taux: Taux; // ⚠️ a valider par un expert (paie SN)
   };
 
+  chargesSocialesSalariales: {
+    /**
+     * Taux global des cotisations sociales SALARIALES (part employe retenue sur
+     * le brut : IPRES retraite regime general, etc.). Sert au bulletin de paie
+     * (module RH). PLACEHOLDER a valider par un expert paie SN.
+     *
+     * NB : ne couvre PAS l'IR sur salaires ni le TRIMF (baremes progressifs) ;
+     * ceux-ci sont saisis en "autres retenues" tant que le bareme n'est pas
+     * modelise et valide.
+     */
+    taux: Taux; // ⚠️ a valider par un expert (paie SN)
+  };
+
   /**
    * Durees d'amortissement par defaut (en annees), par nature d'investissement.
    * Utilisees si l'utilisateur ne precise pas de duree (question 1.3).
@@ -61,6 +74,43 @@ export interface Parametres {
    * Defaut 0 : charges fixes constantes sur 5 ans. Parametrable.
    */
   inflationChargesFixes: Taux;
+
+  /**
+   * Regimes (formel vs informel) — Senegal / OHADA.
+   * Pilote quel regime comptable/fiscal s'applique a une entreprise cliente.
+   * TOUS les seuils/taux sont des PLACEHOLDERS a valider par un expert (DGID /
+   * SYSCOHADA) avant mise en production.
+   */
+  regimes: {
+    /**
+     * Seuils de chiffre d'affaires annuel (FCFA) sous lesquels le Systeme
+     * Minimal de Tresorerie (SMT) est autorise (SYSCOHADA revise / AUDCIF).
+     * ⚠️ a confirmer par un expert-comptable.
+     */
+    seuilsSMT: {
+      commerce: number; // negoce / marchandises
+      artisanat: number; // activites artisanales et assimilees
+      services: number; // prestations de services
+    };
+
+    /**
+     * CGU — Contribution Globale Unique (petits contribuables, personnes
+     * physiques). Impot synthetique qui remplace TVA + IR/IS + CEL (patente).
+     * Le bareme reel de la CGU est progressif par tranche de CA et differe
+     * biens / services : il DOIT etre modelise et valide avec un expert avant
+     * tout calcul. On n'expose ici que le seuil d'eligibilite (placeholder).
+     */
+    cgu: {
+      /** CA annuel maximum pour relever de la CGU (FCFA). ⚠️ a valider (DGID). */
+      seuilChiffreAffaires: number; // ⚠️ PLACEHOLDER
+      /**
+       * Bareme CGU (taux par tranche de CA) — NON defini tant qu'un expert ne
+       * l'a pas valide. Laisse vide volontairement : aucun montant CGU ne doit
+       * etre calcule avec un bareme invente.
+       */
+      bareme: never[];
+    };
+  };
 }
 
 export const PARAMETRES: Parametres = {
@@ -76,6 +126,10 @@ export const PARAMETRES: Parametres = {
 
   chargesSocialesPatronales: {
     taux: 0.21, // ⚠️ PLACEHOLDER a valider par un expert paie SN
+  },
+
+  chargesSocialesSalariales: {
+    taux: 0.056, // ⚠️ PLACEHOLDER (ordre IPRES salarial regime general) a valider
   },
 
   dureesAmortissementDefaut: {
@@ -98,4 +152,16 @@ export const PARAMETRES: Parametres = {
   },
 
   inflationChargesFixes: 0,
+
+  regimes: {
+    seuilsSMT: {
+      commerce: 60_000_000, // ⚠️ a confirmer (SYSCOHADA revise)
+      artisanat: 40_000_000, // ⚠️ a confirmer
+      services: 30_000_000, // ⚠️ a confirmer
+    },
+    cgu: {
+      seuilChiffreAffaires: 50_000_000, // ⚠️ PLACEHOLDER a valider (DGID)
+      bareme: [], // a definir avec un expert avant tout calcul CGU
+    },
+  },
 };
