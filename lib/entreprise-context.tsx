@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Contexte React de l'entreprise active. Fournit a toute l'app :
- *   - la liste des entreprises du cabinet (portefeuille),
- *   - l'entreprise active (celle sur laquelle on travaille),
- *   - les actions pour changer d'entreprise / creer / modifier / supprimer.
+ * Contexte React de l'entreprise active. Les donnees viennent desormais du
+ * SERVEUR (Supabase, RLS) : le layout (app)/layout.tsx charge le portefeuille et
+ * l'id actif (cookie) et les passe en props initiales. Les mutations passent par
+ * les server actions de app/(app)/entreprises/data-actions.ts.
  *
- * Changer d'entreprise met a jour l'id scope (localStorage) : l'AppShell
- * remonte alors la zone de contenu (via une `key`) pour que les modules
- * rechargent leurs donnees scopees par la nouvelle entreprise.
+ * L'id actif est aussi mirroir dans le localStorage (setActiveEntrepriseId) tant
+ * que certains modules stockent encore leurs SAISIES en localStorage scope par
+ * `scopedKey` : ils continuent ainsi de cloisonner leurs donnees par entreprise.
  */
 
 import {
@@ -19,62 +19,82 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import type { Entreprise } from "./engine";
+import type { EntrepriseBrouillon } from "./entreprise-store";
+import { setActiveEntrepriseId } from "./entreprise-active";
 import {
-  portefeuille,
-  type EntrepriseBrouillon,
-} from "./entreprise-store";
+  creerEntrepriseAction,
+  modifierEntrepriseAction,
+  supprimerEntrepriseAction,
+  definirEntrepriseActiveAction,
+} from "@/app/(app)/entreprises/data-actions";
 
 interface EntrepriseContextValue {
-  /** true tant que l'etat n'est pas hydrate depuis le localStorage (SSR). */
+  /** Conserve pour compatibilite : true (donnees fournies par le serveur). */
   pretes: boolean;
   entreprises: Entreprise[];
   active: Entreprise | null;
-  changerActive: (id: string | null) => void;
-  creer: (b: EntrepriseBrouillon) => Entreprise;
-  modifier: (id: string, patch: Partial<Entreprise>) => void;
-  supprimer: (id: string) => void;
+  /** true pour un utilisateur « entreprise » : active figee, pas de changement. */
+  verrouille: boolean;
+  changerActive: (id: string | null) => Promise<void>;
+  creer: (b: EntrepriseBrouillon) => Promise<Entreprise>;
+  modifier: (id: string, patch: Partial<Entreprise>) => Promise<void>;
+  supprimer: (id: string) => Promise<void>;
 }
 
 const EntrepriseContext = createContext<EntrepriseContextValue | null>(null);
 
-export function EntrepriseProvider({ children }: { children: React.ReactNode }) {
-  const [pretes, setPretes] = useState(false);
-  const [entreprises, setEntreprises] = useState<Entreprise[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+export function EntrepriseProvider({
+  initialEntreprises,
+  initialActiveId,
+  verrouille = false,
+  children,
+}: {
+  initialEntreprises: Entreprise[];
+  initialActiveId: string | null;
+  verrouille?: boolean;
+  children: React.ReactNode;
+}) {
+  const router = useRouter();
+  const [entreprises, setEntreprises] = useState<Entreprise[]>(initialEntreprises);
+  const [activeId, setActiveId] = useState<string | null>(initialActiveId);
 
-  // Hydratation cote client uniquement (localStorage indisponible en SSR).
+  // Resynchronise si le serveur renvoie de nouvelles props (apres router.refresh).
+  useEffect(() => setEntreprises(initialEntreprises), [initialEntreprises]);
+  useEffect(() => setActiveId(initialActiveId), [initialActiveId]);
+
+  // Miroir localStorage de l'id actif (scopedKey des modules encore locaux).
   useEffect(() => {
-    const liste = portefeuille.liste();
-    setEntreprises(liste);
-    const idCourant = portefeuille.getActiveId();
-    // Si aucune entreprise active valide, on selectionne la premiere.
-    const valide = idCourant && liste.some((e) => e.id === idCourant);
-    const id = valide ? idCourant : (liste[0]?.id ?? null);
-    portefeuille.setActiveId(id);
-    setActiveId(id);
-    setPretes(true);
-  }, []);
+    setActiveEntrepriseId(activeId);
+  }, [activeId]);
 
-  const changerActive = useCallback((id: string | null) => {
-    portefeuille.setActiveId(id);
-    setActiveId(id);
-  }, []);
+  const changerActive = useCallback(
+    async (id: string | null) => {
+      if (verrouille) return;
+      setActiveId(id);
+      setActiveEntrepriseId(id);
+      await definirEntrepriseActiveAction(id);
+      router.refresh();
+    },
+    [verrouille, router],
+  );
 
-  const creer = useCallback((b: EntrepriseBrouillon): Entreprise => {
-    const e = portefeuille.creer(b);
-    setEntreprises(portefeuille.liste());
+  const creer = useCallback(async (b: EntrepriseBrouillon): Promise<Entreprise> => {
+    const e = await creerEntrepriseAction(b);
+    setEntreprises((prev) => [...prev, e]);
     return e;
   }, []);
 
-  const modifier = useCallback((id: string, patch: Partial<Entreprise>) => {
-    setEntreprises(portefeuille.modifier(id, patch));
+  const modifier = useCallback(async (id: string, patch: Partial<Entreprise>) => {
+    const e = await modifierEntrepriseAction(id, patch);
+    setEntreprises((prev) => prev.map((x) => (x.id === id ? e : x)));
   }, []);
 
-  const supprimer = useCallback((id: string) => {
-    const restantes = portefeuille.supprimer(id);
-    setEntreprises(restantes);
-    setActiveId(portefeuille.getActiveId());
+  const supprimer = useCallback(async (id: string) => {
+    await supprimerEntrepriseAction(id);
+    setEntreprises((prev) => prev.filter((x) => x.id !== id));
+    setActiveId((cur) => (cur === id ? null : cur));
   }, []);
 
   const active = useMemo(
@@ -83,15 +103,11 @@ export function EntrepriseProvider({ children }: { children: React.ReactNode }) 
   );
 
   const value = useMemo<EntrepriseContextValue>(
-    () => ({ pretes, entreprises, active, changerActive, creer, modifier, supprimer }),
-    [pretes, entreprises, active, changerActive, creer, modifier, supprimer],
+    () => ({ pretes: true, entreprises, active, verrouille, changerActive, creer, modifier, supprimer }),
+    [entreprises, active, verrouille, changerActive, creer, modifier, supprimer],
   );
 
-  return (
-    <EntrepriseContext.Provider value={value}>
-      {children}
-    </EntrepriseContext.Provider>
-  );
+  return <EntrepriseContext.Provider value={value}>{children}</EntrepriseContext.Provider>;
 }
 
 export function useEntreprise(): EntrepriseContextValue {

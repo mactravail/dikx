@@ -21,7 +21,6 @@ import type {
 } from "../../lib/engine";
 import {
   store,
-  genId,
   JOURNAUX,
   CLASSES_COMPTABLES,
   PLAN_COMPTABLE,
@@ -29,6 +28,7 @@ import {
   type EcritureLocal,
   type LigneEcritureLocal,
 } from "../../lib/finance-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, BtnPrimary, inputCls } from "../ventes/form";
@@ -81,22 +81,31 @@ function ecritureVide(): EcritureLocal {
 }
 
 export function ComptabiliteClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [ecritures, setEcritures] = useState<EcritureLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [resultat, setResultat] = useState<ResultatComptabilite | null>(null);
   const [etats, setEtats] = useState<EtatsFinanciers | null>(null);
   const [onglet, setOnglet] = useState<Onglet>("journal");
   const [edition, setEdition] = useState<EcritureLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des ecritures de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setEcritures(store.chargerEcritures());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverEcritures(ecritures);
-  }, [ecritures, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const liste = entrepriseId ? await store.chargerEcritures(entrepriseId) : [];
+      if (!vivant) return;
+      setEcritures(liste);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Agregation (balance + controle) par le moteur, debounce leger.
   useEffect(() => {
@@ -113,16 +122,24 @@ export function ComptabiliteClient() {
     };
   }, [ecritures]);
 
-  function enregistrer(e: EcritureLocal) {
-    setEcritures((prev) => {
-      if (e.id) return prev.map((x) => (x.id === e.id ? e : x));
-      return [{ ...e, id: genId() }, ...prev];
-    });
-    setEdition(null);
+  async function enregistrer(e: EcritureLocal) {
+    if (!entrepriseId) return;
+    try {
+      const saved = await store.enregistrerEcriture(entrepriseId, e);
+      setEcritures((prev) => (e.id ? prev.map((x) => (x.id === e.id ? saved : x)) : [saved, ...prev]));
+      setEdition(null);
+    } catch (err) {
+      setErreur((err as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setEcritures((prev) => prev.filter((e) => e.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerEcriture(id);
+      setEcritures((prev) => prev.filter((e) => e.id !== id));
+    } catch (err) {
+      setErreur((err as Error).message);
+    }
   }
 
   if (edition) {
@@ -137,6 +154,17 @@ export function ComptabiliteClient() {
 
   const equilibre = resultat?.equilibre ?? true;
 
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeading titre="Comptabilite" sousTitre="Journal, grand livre et balance SYSCOHADA." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour tenir sa comptabilite.
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeading
@@ -148,6 +176,11 @@ export function ComptabiliteClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Ecritures" value={ecritures.length} icon="comptabilite" />
@@ -457,6 +490,7 @@ function PostesCard({
       {postes.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-slate-400">Aucun poste.</div>
       ) : (
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <tbody>
             {postes.map((p) => (
@@ -476,6 +510,7 @@ function PostesCard({
             </tr>
           </tfoot>
         </table>
+        </div>
       )}
     </Card>
   );

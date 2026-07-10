@@ -33,13 +33,13 @@ export function EntrepriseSelector() {
   }
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative min-w-0">
       <button
         type="button"
         onClick={() => setOuvert((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={ouvert}
-        className="flex max-w-[15rem] items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left hover:bg-slate-50"
+        className="flex w-full max-w-[11rem] items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left hover:bg-slate-50 sm:max-w-[15rem]"
       >
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand-50 text-brand-600">
           <Icon name="entreprise" className="h-4 w-4" />
@@ -86,7 +86,7 @@ export function EntrepriseSelector() {
                   role="option"
                   aria-selected={actif}
                   onClick={() => {
-                    changerActive(e.id);
+                    void changerActive(e.id);
                     setOuvert(false);
                   }}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 ${

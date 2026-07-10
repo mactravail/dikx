@@ -5,13 +5,15 @@
  * de contenu. Client component car il gere l'etat actif (usePathname) et le
  * tiroir mobile. Les `children` sont des pages rendues cote serveur.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { NAV_GROUPS, findItem, type NavItem } from "../lib/nav";
+import { usePathname, useRouter } from "next/navigation";
+import { NAV_GROUPS, navPourRole, navMobileBas, cheminAutorise, findItem, type NavItem } from "../lib/nav";
 import { Icon } from "./icons";
 import { EntrepriseSelector } from "./EntrepriseSelector";
+import { UserMenu } from "./UserMenu";
 import { useEntreprise } from "../lib/entreprise-context";
+import { useSession, initialesDe } from "../lib/session-context";
 
 function estActif(pathname: string, href: string): boolean {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -55,9 +57,21 @@ function LienModule({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const { active } = useEntreprise();
-  const courant = findItem(pathname) ?? NAV_GROUPS[0]!.items[0]!;
+  const { email, nom, role } = useSession();
+  const groupes = role === "comptable" ? NAV_GROUPS : navPourRole(role);
+  const courant = findItem(pathname) ?? groupes[0]?.items[0] ?? NAV_GROUPS[0]!.items[0]!;
+  const raccourcisBas = navMobileBas(role);
   const fermer = () => setOpen(false);
+
+  // Garde-fou UX : un utilisateur entreprise ne reste pas sur une route reservee
+  // au comptable (l'autorite sur les donnees reste la RLS).
+  useEffect(() => {
+    if (role === "entreprise" && !cheminAutorise(pathname, role)) {
+      router.replace("/");
+    }
+  }, [pathname, role, router]);
 
   const contenuSidebar = (
     <div className="flex h-full flex-col bg-[var(--color-sidebar)]">
@@ -74,7 +88,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Groupes de navigation */}
       <nav className="scroll-thin flex-1 space-y-5 overflow-y-auto px-3 pb-6">
-        {NAV_GROUPS.map((groupe) => (
+        {groupes.map((groupe) => (
           <div key={groupe.titre}>
             <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               {groupe.titre}
@@ -130,8 +144,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Icon name="menu" />
           </button>
 
-          {/* Selecteur d'entreprise : dossier client sur lequel on travaille */}
-          <EntrepriseSelector />
+          {/* Comptable : selecteur du dossier client. Entreprise : nom fige. */}
+          {role === "comptable" ? (
+            <EntrepriseSelector />
+          ) : (
+            active && (
+              <div className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand-50 text-brand-600">
+                  <Icon name="entreprise" className="h-4 w-4" />
+                </span>
+                <span className="block max-w-[9rem] truncate text-sm font-medium text-slate-800 sm:max-w-[12rem]">
+                  {active.raisonSociale}
+                </span>
+              </div>
+            )
+          )}
 
           <div className="hidden min-w-0 flex-1 sm:block">
             <div className="truncate text-[15px] font-semibold text-slate-800">
@@ -148,20 +175,51 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             <Icon name="bell" />
           </button>
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700"
-            title="fallmactar14@gmail.com"
-          >
-            MA
-          </div>
+          <UserMenu email={email} initiales={initialesDe(nom, email)} />
         </header>
 
         {/* key = entreprise active : remonte le contenu au changement d'entreprise
-            pour que les modules rechargent leurs donnees scopees. */}
-        <main key={active?.id ?? "aucune"} className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+            pour que les modules rechargent leurs donnees scopees.
+            pb-24 : reserve la place de la barre d'onglets basse (mobile). */}
+        <main
+          key={active?.id ?? "aucune"}
+          className="flex-1 overflow-x-clip px-4 pt-6 pb-24 sm:px-6 lg:px-8 lg:pb-8"
+        >
           {children}
         </main>
       </div>
+
+      {/* Barre d'onglets basse — navigation au pouce (mobile uniquement). Le
+          bouton « Menu » ouvre le tiroir complet ci-dessus. */}
+      <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden">
+        {raccourcisBas.map((item) => {
+          const actif = estActif(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={fermer}
+              aria-current={actif ? "page" : undefined}
+              className={[
+                "flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
+                actif ? "text-brand-600" : "text-slate-500 hover:text-slate-700",
+              ].join(" ")}
+            >
+              <Icon name={item.icon} className="h-[22px] w-[22px]" />
+              <span className="max-w-full truncate px-0.5">{item.label}</span>
+            </Link>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium text-slate-500 hover:text-slate-700"
+          aria-label="Ouvrir le menu complet"
+        >
+          <Icon name="menu" className="h-[22px] w-[22px]" />
+          <span>Menu</span>
+        </button>
+      </nav>
     </div>
   );
 }

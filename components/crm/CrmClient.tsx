@@ -12,12 +12,12 @@ import { calculerPipelineAction } from "../../app/(app)/crm/actions";
 import type { ResultatPipeline } from "../../lib/engine";
 import {
   store,
-  genId,
   ETAPES_PIPELINE,
   PROBA_PAR_ETAPE,
   type ClientLocal,
   type OpportuniteLocal,
 } from "../../lib/ventes-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -46,22 +46,33 @@ function oppVide(): OpportuniteLocal {
 }
 
 export function CrmClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [opps, setOpps] = useState<OpportuniteLocal[]>([]);
   const [clients, setClients] = useState<ClientLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [pipeline, setPipeline] = useState<ResultatPipeline | null>(null);
   const [edition, setEdition] = useState<OpportuniteLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des opportunites + clients de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setOpps(store.chargerOpportunites());
-    setClients(store.chargerClients());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverOpportunites(opps);
-  }, [opps, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const [oppsList, clis] = entrepriseId
+        ? await Promise.all([store.chargerOpportunites(entrepriseId), store.chargerClients(entrepriseId)])
+        : [[], []];
+      if (!vivant) return;
+      setOpps(oppsList);
+      setClients(clis);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Agregation du pipeline par le moteur (server action), debounce leger.
   useEffect(() => {
@@ -84,36 +95,58 @@ export function CrmClient() {
     return m;
   }, [pipeline]);
 
-  function enregistrer(o: OpportuniteLocal) {
-    if (!o.titre.trim()) return;
-    setOpps((prev) => {
-      if (o.id) return prev.map((x) => (x.id === o.id ? o : x));
-      return [...prev, { ...o, id: genId() }];
-    });
-    setEdition(null);
+  async function enregistrer(o: OpportuniteLocal) {
+    if (!o.titre.trim() || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerOpportunite(entrepriseId, o);
+      setOpps((prev) => (o.id ? prev.map((x) => (x.id === o.id ? saved : x)) : [...prev, saved]));
+      setEdition(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setOpps((prev) => prev.filter((o) => o.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerOpportunite(id);
+      setOpps((prev) => prev.filter((o) => o.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function deplacer(id: string, direction: -1 | 1) {
-    setOpps((prev) =>
-      prev.map((o) => {
-        if (o.id !== id) return o;
-        const idx = ETAPES.indexOf(o.etape);
-        const nouvel = Math.min(ETAPES.length - 1, Math.max(0, idx + direction));
-        const etape = ETAPES[nouvel] ?? o.etape;
-        // La proba par defaut suit l'etape (l'utilisateur peut l'ajuster ensuite).
-        return { ...o, etape, probabilite: PROBA_PAR_ETAPE[etape] ?? o.probabilite };
-      }),
-    );
+  async function deplacer(id: string, direction: -1 | 1) {
+    if (!entrepriseId) return;
+    const cur = opps.find((o) => o.id === id);
+    if (!cur) return;
+    const idx = ETAPES.indexOf(cur.etape);
+    const nouvel = Math.min(ETAPES.length - 1, Math.max(0, idx + direction));
+    const etape = ETAPES[nouvel] ?? cur.etape;
+    // La proba par defaut suit l'etape (l'utilisateur peut l'ajuster ensuite).
+    const modifiee = { ...cur, etape, probabilite: PROBA_PAR_ETAPE[etape] ?? cur.probabilite };
+    try {
+      const saved = await store.enregistrerOpportunite(entrepriseId, modifiee);
+      setOpps((prev) => prev.map((o) => (o.id === id ? saved : o)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
   // Affaires ouvertes = hors Gagne / Perdu.
   const ouvertes = (pipeline?.parEtape ?? []).filter((e) => e.etape !== "Gagne" && e.etape !== "Perdu");
   const totalOuvert = ouvertes.reduce((s, e) => s + e.total, 0);
   const gagne = totauxEtape.get("Gagne")?.total ?? 0;
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Ventes & CRM" sousTitre="Pipeline commercial : opportunites et prevision ponderee." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer son pipeline commercial.
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -126,6 +159,11 @@ export function CrmClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Opportunites" value={pipeline?.nombre ?? opps.length} icon="crm" />

@@ -22,7 +22,6 @@ import type {
 } from "../../lib/engine";
 import {
   store,
-  genId,
   TYPES_COMPTE,
   OPERATEURS,
   CATEGORIES_FLUX,
@@ -31,6 +30,11 @@ import {
   type CompteTresorerieLocal,
   type MouvementLocal,
 } from "../../lib/tresorerie-data";
+import { useEntreprise } from "../../lib/entreprise-context";
+import { useSession } from "../../lib/session-context";
+import { estEnvoye } from "../../lib/transmission";
+import { rappelerAction } from "../../app/(app)/transmission/data-actions";
+import { BadgeTransmission } from "../BadgeTransmission";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -63,28 +67,48 @@ function mouvementVide(compteId: string): MouvementLocal {
 }
 
 export function TresorerieClient() {
+  const { active } = useEntreprise();
+  const { role } = useSession();
+  const estEntreprise = role === "entreprise";
+  const entrepriseId = active?.id ?? "";
   const [comptes, setComptes] = useState<CompteTresorerieLocal[]>([]);
   const [mouvements, setMouvements] = useState<MouvementLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [resultat, setResultat] = useState<ResultatTresorerie | null>(null);
   const [editCompte, setEditCompte] = useState<CompteTresorerieLocal | null>(null);
   const [editMvt, setEditMvt] = useState<MouvementLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des saisies de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setComptes(store.chargerComptes());
-    setMouvements(store.chargerMouvements());
-    setPret(true);
-  }, []);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      if (!entrepriseId) {
+        if (vivant) {
+          setComptes([]);
+          setMouvements([]);
+          setPret(true);
+        }
+        return;
+      }
+      const [cs, ms] = await Promise.all([
+        store.chargerComptes(entrepriseId),
+        store.chargerMouvements(entrepriseId),
+      ]);
+      if (!vivant) return;
+      setComptes(cs);
+      setMouvements(ms);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
-  useEffect(() => {
-    if (pret) store.sauverComptes(comptes);
-  }, [comptes, pret]);
-  useEffect(() => {
-    if (pret) store.sauverMouvements(mouvements);
-  }, [mouvements, pret]);
-
-  // Agregation par le moteur (server action), debounce leger.
+  // Agregation par le moteur (server action), debounce leger. Aucune persistance
+  // ici : c'est le SNAPSHOT d'affichage recalcule a partir des saisies courantes.
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
@@ -99,32 +123,68 @@ export function TresorerieClient() {
     };
   }, [comptes, mouvements]);
 
-  function enregistrerCompte(c: CompteTresorerieLocal) {
-    if (!c.nom.trim()) return;
-    setComptes((prev) => {
-      if (c.id) return prev.map((x) => (x.id === c.id ? c : x));
-      return [...prev, { ...c, id: genId() }];
-    });
-    setEditCompte(null);
+  async function enregistrerCompte(c: CompteTresorerieLocal) {
+    if (!c.nom.trim() || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerCompte(entrepriseId, c);
+      setComptes((prev) => (c.id ? prev.map((x) => (x.id === c.id ? saved : x)) : [...prev, saved]));
+      setEditCompte(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
-  function supprimerCompte(id: string) {
-    setComptes((prev) => prev.filter((c) => c.id !== id));
-    setMouvements((prev) => prev.filter((m) => m.compteId !== id)); // mouvements orphelins retires
+  async function supprimerCompte(id: string) {
+    try {
+      await store.supprimerCompte(id);
+      setComptes((prev) => prev.filter((c) => c.id !== id));
+      // Les mouvements du compte sont supprimes en cascade cote base.
+      setMouvements((prev) => prev.filter((m) => m.compteId !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function enregistrerMvt(m: MouvementLocal) {
-    if (!m.compteId || m.montant <= 0) return;
-    setMouvements((prev) => {
-      if (m.id) return prev.map((x) => (x.id === m.id ? m : x));
-      return [{ ...m, id: genId() }, ...prev];
-    });
-    setEditMvt(null);
+  async function enregistrerMvt(m: MouvementLocal) {
+    if (!m.compteId || m.montant <= 0 || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerMouvement(entrepriseId, m);
+      setMouvements((prev) => (m.id ? prev.map((x) => (x.id === m.id ? saved : x)) : [saved, ...prev]));
+      setEditMvt(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
-  function supprimerMvt(id: string) {
-    setMouvements((prev) => prev.filter((m) => m.id !== id));
+  async function supprimerMvt(id: string) {
+    try {
+      await store.supprimerMouvement(id);
+      setMouvements((prev) => prev.filter((m) => m.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  // Rappel : un mouvement deja envoye repasse en brouillon pour correction.
+  async function rappelerMvt(id: string) {
+    try {
+      await rappelerAction("mouvements_tresorerie", id);
+      setMouvements((prev) => prev.map((m) => (m.id === id ? { ...m, transmission: "brouillon" } : m)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
   const soldeParCompte = new Map(resultat?.comptes.map((c) => [c.compteId, c]) ?? []);
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Tresorerie" sousTitre="Ou se trouve l'argent : banques, caisses, mobile money." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour saisir sa tresorerie.
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -144,6 +204,15 @@ export function TresorerieClient() {
           </div>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {erreur}
+        </div>
+      )}
+      {!pret && (
+        <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>
+      )}
 
       {/* Indicateurs de tresorerie (snapshot moteur) */}
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -226,8 +295,10 @@ export function TresorerieClient() {
             <MouvementsTable
               mouvements={mouvements}
               comptes={comptes}
+              estEntreprise={estEntreprise}
               onOpen={setEditMvt}
               onDelete={supprimerMvt}
+              onRappeler={rappelerMvt}
             />
           </section>
         </div>
@@ -340,13 +411,17 @@ function Barre({
 function MouvementsTable({
   mouvements,
   comptes,
+  estEntreprise,
   onOpen,
   onDelete,
+  onRappeler,
 }: {
   mouvements: MouvementLocal[];
   comptes: CompteTresorerieLocal[];
+  estEntreprise: boolean;
   onOpen: (m: MouvementLocal) => void;
   onDelete: (id: string) => void;
+  onRappeler: (id: string) => void;
 }) {
   const nomCompte = (id: string) => comptes.find((c) => c.id === id)?.nom ?? "— compte supprime —";
   const tries = [...mouvements].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
@@ -384,22 +459,36 @@ function MouvementsTable({
                       {fcfa(m.montant)}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => onOpen(m)}
-                          className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
-                        >
-                          Ouvrir
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDelete(m.id)}
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
-                          aria-label="Supprimer"
-                        >
-                          <Icon name="close" className="h-4 w-4" />
-                        </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {estEntreprise && <BadgeTransmission etat={m.transmission} />}
+                        {estEntreprise && estEnvoye(m.transmission) ? (
+                          <button
+                            type="button"
+                            onClick={() => onRappeler(m.id)}
+                            className="rounded-lg px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50"
+                            title="Repasser en brouillon pour corriger"
+                          >
+                            Rappeler
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onOpen(m)}
+                              className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
+                            >
+                              Ouvrir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDelete(m.id)}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                              aria-label="Supprimer"
+                            >
+                              <Icon name="close" className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

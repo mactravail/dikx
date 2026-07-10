@@ -15,12 +15,16 @@ import { calculerPaieAction } from "../../app/(app)/rh/actions";
 import type { BulletinInput, ResultatPaie } from "../../lib/engine";
 import {
   store,
-  genId,
   TYPES_CONTRAT,
   libelleContrat,
   type EmployeLocal,
   type TypeContrat,
 } from "../../lib/organisation-data";
+import { useEntreprise } from "../../lib/entreprise-context";
+import { useSession } from "../../lib/session-context";
+import { estEnvoye } from "../../lib/transmission";
+import { rappelerAction } from "../../app/(app)/transmission/data-actions";
+import { BadgeTransmission } from "../BadgeTransmission";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -52,25 +56,36 @@ function employeVide(): EmployeLocal {
 }
 
 export function RhClient() {
+  const { active } = useEntreprise();
+  const { role } = useSession();
+  const estEntreprise = role === "entreprise";
+  const entrepriseId = active?.id ?? "";
   const [employes, setEmployes] = useState<EmployeLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [resultat, setResultat] = useState<ResultatPaie | null>(null);
   const [edition, setEdition] = useState<EmployeLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des employes de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setEmployes(store.chargerEmployes());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverEmployes(employes);
-  }, [employes, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const liste = entrepriseId ? await store.chargerEmployes(entrepriseId) : [];
+      if (!vivant) return;
+      setEmployes(liste);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Seuls les employes actifs entrent dans la paie du mois.
   const actifs = useMemo(() => employes.filter((e) => e.actif), [employes]);
 
-  // Agregation de la paie par le moteur (server action), debounce leger.
+  // Agregation d'affichage de la paie par le moteur (server action), debounce.
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
@@ -83,24 +98,45 @@ export function RhClient() {
   }, [actifs]);
 
   async function enregistrer(e: EmployeLocal) {
-    if (!e.nom.trim()) return;
-    // Snapshot net/cout de la fiche = moteur (jamais recalcule dans l'UI).
-    const r = await calculerPaieAction([toBulletin(e)]);
-    const b = r.ok ? r.resultat.bulletins[0] : undefined;
-    const snapshot: EmployeLocal = {
-      ...e,
-      netAPayer: b?.netAPayer ?? e.netAPayer,
-      coutEmployeur: b?.coutEmployeur ?? e.coutEmployeur,
-    };
-    setEmployes((prev) => {
-      if (snapshot.id) return prev.map((x) => (x.id === snapshot.id ? snapshot : x));
-      return [{ ...snapshot, id: genId() }, ...prev];
-    });
-    setEdition(null);
+    if (!e.nom.trim() || !entrepriseId) return;
+    try {
+      // Snapshot net/cout = moteur cote serveur (data-action).
+      const saved = await store.enregistrerEmploye(entrepriseId, e);
+      setEmployes((prev) => (e.id ? prev.map((x) => (x.id === e.id ? saved : x)) : [saved, ...prev]));
+      setEdition(null);
+    } catch (err) {
+      setErreur((err as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setEmployes((prev) => prev.filter((e) => e.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerEmploye(id);
+      setEmployes((prev) => prev.filter((e) => e.id !== id));
+    } catch (err) {
+      setErreur((err as Error).message);
+    }
+  }
+
+  // Rappel : un employe deja envoye repasse en brouillon pour correction.
+  async function rappeler(id: string) {
+    try {
+      await rappelerAction("employes", id);
+      setEmployes((prev) => prev.map((e) => (e.id === id ? { ...e, transmission: "brouillon" } : e)));
+    } catch (err) {
+      setErreur((err as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Ressources humaines" sousTitre="Registre du personnel et paie." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer ses employes.
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -114,6 +150,11 @@ export function RhClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Effectif actif" value={actifs.length} hint={`${employes.length} au total`} icon="rh" />
@@ -168,22 +209,36 @@ export function RhClient() {
                       </td>
                       <td className="px-4 py-2.5 text-right font-medium text-slate-800">{fcfa(e.netAPayer)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <div className="flex justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setEdition(e)}
-                            className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
-                          >
-                            Ouvrir
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => supprimer(e.id)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
-                            aria-label="Supprimer"
-                          >
-                            <Icon name="close" className="h-4 w-4" />
-                          </button>
+                        <div className="flex items-center justify-end gap-2">
+                          {estEntreprise && <BadgeTransmission etat={e.transmission} />}
+                          {estEntreprise && estEnvoye(e.transmission) ? (
+                            <button
+                              type="button"
+                              onClick={() => rappeler(e.id)}
+                              className="rounded-lg px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50"
+                              title="Repasser en brouillon pour corriger"
+                            >
+                              Rappeler
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setEdition(e)}
+                                className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
+                              >
+                                Ouvrir
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => supprimer(e.id)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                                aria-label="Supprimer"
+                              >
+                                <Icon name="close" className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>

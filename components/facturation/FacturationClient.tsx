@@ -13,13 +13,17 @@ import { calculerDocumentAction } from "../../app/(app)/facturation/actions";
 import type { DocumentCalc, DocumentInput } from "../../lib/engine";
 import {
   store,
-  genId,
   prochainNumero,
   type ClientLocal,
   type DocumentLocal,
   type LigneLocal,
   type StatutDocument,
 } from "../../lib/ventes-data";
+import { useEntreprise } from "../../lib/entreprise-context";
+import { useSession } from "../../lib/session-context";
+import { estEnvoye } from "../../lib/transmission";
+import { rappelerAction } from "../../app/(app)/transmission/data-actions";
+import { BadgeTransmission } from "../BadgeTransmission";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, inputCls, BtnPrimary, BtnGhost } from "../ventes/form";
@@ -87,42 +91,87 @@ function versInput(d: DocumentLocal): DocumentInput {
 }
 
 export function FacturationClient() {
+  const { active } = useEntreprise();
+  const { role } = useSession();
+  const estEntreprise = role === "entreprise";
+  const entrepriseId = active?.id ?? "";
   const [documents, setDocuments] = useState<DocumentLocal[]>([]);
   const [clients, setClients] = useState<ClientLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [draft, setDraft] = useState<DocumentLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
 
+  // Documents + clients de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setDocuments(store.chargerDocuments());
-    setClients(store.chargerClients());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverDocuments(documents);
-  }, [documents, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      if (!entrepriseId) {
+        if (vivant) {
+          setDocuments([]);
+          setClients([]);
+          setPret(true);
+        }
+        return;
+      }
+      const [docs, clis] = await Promise.all([
+        store.chargerDocuments(entrepriseId),
+        store.chargerClients(entrepriseId),
+      ]);
+      if (!vivant) return;
+      setDocuments(docs);
+      setClients(clis);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   function nouveau() {
     setDraft(docVide(documents));
   }
 
-  function enregistrer(d: DocumentLocal, calc: DocumentCalc | null) {
-    const snapshot: DocumentLocal = {
-      ...d,
-      // Totaux = snapshot du moteur (jamais recalcules ici).
-      totalHT: calc?.totalHT ?? d.totalHT,
-      totalTVA: calc?.totalTVA ?? d.totalTVA,
-      totalTTC: calc?.totalTTC ?? d.totalTTC,
-    };
-    setDocuments((prev) => {
-      if (snapshot.id) return prev.map((x) => (x.id === snapshot.id ? snapshot : x));
-      return [{ ...snapshot, id: genId() }, ...prev];
-    });
-    setDraft(null);
+  async function enregistrer(d: DocumentLocal) {
+    if (!entrepriseId) return;
+    try {
+      // Totaux = snapshot du moteur, calcule cote serveur (data-action).
+      const saved = await store.enregistrerDocument(entrepriseId, d);
+      setDocuments((prev) => (d.id ? prev.map((x) => (x.id === d.id ? saved : x)) : [saved, ...prev]));
+      setDraft(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setDocuments((prev) => prev.filter((d) => d.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerDocument(id);
+      setDocuments((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  // Rappel : un document deja envoye repasse en brouillon pour correction.
+  async function rappeler(id: string) {
+    try {
+      await rappelerAction("documents", id);
+      setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, transmission: "brouillon" } : d)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeading titre="Facturation" sousTitre="Devis, factures et avoirs." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour saisir sa facturation.
+        </Card>
+      </div>
+    );
   }
 
   if (draft) {
@@ -154,6 +203,11 @@ export function FacturationClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatTile label="Documents" value={documents.length} icon="invoice" />
@@ -195,22 +249,36 @@ export function FacturationClient() {
                     </td>
                     <td className="px-4 py-2.5 text-right font-medium text-slate-800">{fcfa(d.totalTTC)}</td>
                     <td className="px-4 py-2.5 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setDraft(d)}
-                          className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
-                        >
-                          Ouvrir
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => supprimer(d.id)}
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
-                          aria-label="Supprimer"
-                        >
-                          <Icon name="close" className="h-4 w-4" />
-                        </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {estEntreprise && <BadgeTransmission etat={d.transmission} />}
+                        {estEntreprise && estEnvoye(d.transmission) ? (
+                          <button
+                            type="button"
+                            onClick={() => rappeler(d.id)}
+                            className="rounded-lg px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50"
+                            title="Repasser en brouillon pour corriger"
+                          >
+                            Rappeler
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setDraft(d)}
+                              className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
+                            >
+                              Ouvrir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => supprimer(d.id)}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                              aria-label="Supprimer"
+                            >
+                              <Icon name="close" className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

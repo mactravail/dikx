@@ -1,8 +1,9 @@
 /**
- * Etat de travail LOCAL du pole Organisation (RH / paie + projets / taches).
+ * Contrat de donnees du pole Organisation (RH / paie + projets / taches).
  *
- * Persiste dans le `localStorage` du navigateur en attendant le branchement
- * Supabase (tables prevues : db/migrations/0004_organisation.sql).
+ * Persiste dans SUPABASE (tables 0004 + entreprise_id 0011/0014), sous RLS
+ * scopee par entreprise, via les server actions rh/projets. Le `store` ci-dessous
+ * ne fait que deleguer a ces actions (methodes ASYNC).
  *
  * Regle raktak respectee : ce fichier ne contient AUCUN calcul monetaire. Les
  * seuls montants stockes ici sont soit des SAISIES (brut, primes, retenues),
@@ -11,8 +12,21 @@
  * REFERENCE (pas des taux) : ils servent la saisie, pas le calcul.
  */
 
-import { scopedKey } from "./entreprise-active";
 import type { StatutTache } from "./engine";
+import type { EtatTransmission } from "./transmission";
+import {
+  listerEmployesAction,
+  upsertEmployeAction,
+  supprimerEmployeAction,
+} from "@/app/(app)/rh/data-actions";
+import {
+  listerProjetsAction,
+  upsertProjetAction,
+  supprimerProjetAction,
+  listerTachesAction,
+  upsertTacheAction,
+  supprimerTacheAction,
+} from "@/app/(app)/projets/data-actions";
 
 /* ------------------------------- RH / paie ------------------------------- */
 
@@ -33,6 +47,8 @@ export interface EmployeLocal {
   // Snapshots du moteur (source: server action) — jamais recalcules dans l'UI.
   netAPayer: number;
   coutEmployeur: number;
+  /** Etat de transmission au comptable (0013). Absent = brouillon. */
+  transmission?: EtatTransmission;
 }
 
 export const TYPES_CONTRAT: ReadonlyArray<[TypeContrat, string]> = [
@@ -100,71 +116,24 @@ export function genId(): string {
 }
 
 /* ------------------------------- stockage ------------------------------- */
-
-// Suffixes SCOPES par entreprise active (voir lib/entreprise-active.ts).
-const SUFFIXES = {
-  employes: "rh.employes",
-  projets: "projets.projets",
-  taches: "projets.taches",
-} as const;
-
-function load<T>(key: string, seed: T[]): T[] {
-  if (typeof window === "undefined") return seed;
-  try {
-    const brut = window.localStorage.getItem(key);
-    if (!brut) return seed;
-    const val = JSON.parse(brut);
-    return Array.isArray(val) ? (val as T[]) : seed;
-  } catch {
-    return seed;
-  }
-}
-
-function save<T>(key: string, value: T[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* quota / mode prive : on ignore, l'etat reste en memoire */
-  }
-}
+// Employes, projets & taches sont persistes dans Supabase (RLS, scope par
+// entreprise) via les data-actions. Toutes les methodes sont ASYNC et prennent
+// l'id de l'entreprise active (fourni par le contexte cote client).
 
 export const store = {
-  chargerEmployes: () => load<EmployeLocal>(scopedKey(SUFFIXES.employes), SEED_EMPLOYES),
-  sauverEmployes: (v: EmployeLocal[]) => save(scopedKey(SUFFIXES.employes), v),
-  chargerProjets: () => load<ProjetLocal>(scopedKey(SUFFIXES.projets), SEED_PROJETS),
-  sauverProjets: (v: ProjetLocal[]) => save(scopedKey(SUFFIXES.projets), v),
-  chargerTaches: () => load<TacheLocal>(scopedKey(SUFFIXES.taches), SEED_TACHES),
-  sauverTaches: (v: TacheLocal[]) => save(scopedKey(SUFFIXES.taches), v),
+  // Employes : Supabase (RLS), methodes ASYNC scopees par entreprise active.
+  chargerEmployes: (entrepriseId: string) => listerEmployesAction(entrepriseId),
+  /** Cree (id vide) ou met a jour un employe ; renvoie le snapshot persiste. */
+  enregistrerEmploye: (entrepriseId: string, e: EmployeLocal) => upsertEmployeAction(entrepriseId, e),
+  supprimerEmploye: (id: string) => supprimerEmployeAction(id),
+  // Projets : Supabase (RLS), methodes ASYNC scopees par entreprise active.
+  chargerProjets: (entrepriseId: string) => listerProjetsAction(entrepriseId),
+  /** Cree (id vide) ou met a jour un projet ; renvoie le projet persiste. */
+  enregistrerProjet: (entrepriseId: string, p: ProjetLocal) => upsertProjetAction(entrepriseId, p),
+  supprimerProjet: (id: string) => supprimerProjetAction(id),
+  // Taches : Supabase (RLS), methodes ASYNC scopees par entreprise active.
+  chargerTaches: (entrepriseId: string) => listerTachesAction(entrepriseId),
+  /** Cree (id vide) ou met a jour une tache ; renvoie la tache persistee. */
+  enregistrerTache: (entrepriseId: string, t: TacheLocal) => upsertTacheAction(entrepriseId, t),
+  supprimerTache: (id: string) => supprimerTacheAction(id),
 };
-
-/* --------------------------- donnees de demo ---------------------------- */
-// Contexte PME senegalaise. Les net/cout des employes sont indicatifs ; ils
-// seront remplaces par le snapshot du moteur des la 1re modification.
-
-const SEED_EMPLOYES: EmployeLocal[] = [
-  { id: "emp-demo-1", nom: "Awa Ndiaye", poste: "Responsable administrative", typeContrat: "CDI", dateEmbauche: "2022-03-01", telephone: "+221 77 234 56 78", actif: true, salaireBrutMensuel: 450_000, primes: 30_000, autresRetenues: 0, netAPayer: 453_120, coutEmployeur: 580_800 },
-  { id: "emp-demo-2", nom: "Cheikh Fall", poste: "Chef de production", typeContrat: "CDI", dateEmbauche: "2021-09-15", telephone: "+221 76 345 67 89", actif: true, salaireBrutMensuel: 400_000, primes: 0, autresRetenues: 0, netAPayer: 377_600, coutEmployeur: 484_000 },
-  { id: "emp-demo-3", nom: "Fatou Sarr", poste: "Comptable", typeContrat: "CDI", dateEmbauche: "2023-01-10", telephone: "+221 78 456 78 90", actif: true, salaireBrutMensuel: 350_000, primes: 0, autresRetenues: 0, netAPayer: 330_400, coutEmployeur: 423_500 },
-  { id: "emp-demo-4", nom: "Ibrahima Ba", poste: "Livreur", typeContrat: "CDD", dateEmbauche: "2024-05-02", telephone: "+221 70 567 89 01", actif: true, salaireBrutMensuel: 180_000, primes: 15_000, autresRetenues: 0, netAPayer: 184_080, coutEmployeur: 235_950 },
-  { id: "emp-demo-5", nom: "Mariama Diallo", poste: "Assistante commerciale", typeContrat: "stage", dateEmbauche: "2025-02-01", actif: true, salaireBrutMensuel: 120_000, primes: 0, autresRetenues: 0, netAPayer: 113_280, coutEmployeur: 145_200 },
-];
-
-const SEED_PROJETS: ProjetLocal[] = [
-  { id: "prj-demo-1", nom: "Ouverture point de vente Thies", client: "Interne", statut: "actif", echeance: "2026-09-30" },
-  { id: "prj-demo-2", nom: "Contrat farine — Boulangerie La Teranga", client: "Boulangerie La Teranga", statut: "actif", echeance: "2026-08-15" },
-  { id: "prj-demo-3", nom: "Refonte site vitrine", client: "Interne", statut: "en_pause" },
-];
-
-const SEED_TACHES: TacheLocal[] = [
-  // Projet 1 — ouverture Thies
-  { id: "tsk-demo-1", projetId: "prj-demo-1", titre: "Trouver un local", statut: "termine", assignee: "Awa Ndiaye", heuresEstimees: 16, heuresRealisees: 20 },
-  { id: "tsk-demo-2", projetId: "prj-demo-1", titre: "Negocier le bail", statut: "en_cours", assignee: "Awa Ndiaye", echeance: "2026-07-20", heuresEstimees: 8, heuresRealisees: 5 },
-  { id: "tsk-demo-3", projetId: "prj-demo-1", titre: "Recruter 2 vendeurs", statut: "a_faire", assignee: "Fatou Sarr", echeance: "2026-08-31", heuresEstimees: 12, heuresRealisees: 0 },
-  { id: "tsk-demo-4", projetId: "prj-demo-1", titre: "Amenagement et signaletique", statut: "a_faire", heuresEstimees: 24, heuresRealisees: 0 },
-  // Projet 2 — contrat farine
-  { id: "tsk-demo-5", projetId: "prj-demo-2", titre: "Signer le contrat cadre", statut: "termine", assignee: "Cheikh Fall", heuresEstimees: 4, heuresRealisees: 3 },
-  { id: "tsk-demo-6", projetId: "prj-demo-2", titre: "Planifier les livraisons hebdo", statut: "en_cours", assignee: "Ibrahima Ba", echeance: "2026-07-15", heuresEstimees: 6, heuresRealisees: 4 },
-  // Projet 3 — site vitrine
-  { id: "tsk-demo-7", projetId: "prj-demo-3", titre: "Rediger les contenus", statut: "a_faire", assignee: "Mariama Diallo", heuresEstimees: 10, heuresRealisees: 0 },
-];

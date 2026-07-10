@@ -8,7 +8,7 @@
  * besoins (bruts / nets) et le cout matiere viennent de la server action ->
  * moteur teste (`calculerProduction`). Le stock disponible des composants est lu
  * dans le module Stocks (snapshot du moteur). Le navigateur ne calcule aucun
- * besoin ni cout. Etat persiste en localStorage (Supabase a venir).
+ * besoin ni cout. Etat persiste dans Supabase (RLS, scope par entreprise active).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { calculerProductionAction } from "../../app/(app)/production/actions";
@@ -20,7 +20,6 @@ import type {
 } from "../../lib/engine";
 import {
   store,
-  genId,
   STATUTS_ORDRE,
   libelleStatutOrdre,
   type NomenclatureLocal,
@@ -28,6 +27,7 @@ import {
   type ComposantLocal,
   type StatutOrdre,
 } from "../../lib/achats-stock-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -70,6 +70,8 @@ function nomenclatureVide(): NomenclatureLocal {
 }
 
 export function ProductionClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [nomenclatures, setNomenclatures] = useState<NomenclatureLocal[]>([]);
   const [ordres, setOrdres] = useState<OrdreLocal[]>([]);
   const [stock, setStock] = useState<StockComposant[]>([]);
@@ -77,24 +79,32 @@ export function ProductionClient() {
   const [resultat, setResultat] = useState<ResultatProduction | null>(null);
   const [editionOrdre, setEditionOrdre] = useState<OrdreLocal | null>(null);
   const [editionNom, setEditionNom] = useState<NomenclatureLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des nomenclatures, ordres et stock de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setNomenclatures(store.chargerNomenclatures());
-    setOrdres(store.chargerOrdres());
-    // Stock disponible des composants = snapshot du module Stocks.
-    setStock(
-      store.chargerArticles().map((a) => ({ ref: a.ref, quantite: a.quantite })),
-    );
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverNomenclatures(nomenclatures);
-  }, [nomenclatures, pret]);
-  useEffect(() => {
-    if (pret) store.sauverOrdres(ordres);
-  }, [ordres, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const [noms, ords, arts] = entrepriseId
+        ? await Promise.all([
+            store.chargerNomenclatures(entrepriseId),
+            store.chargerOrdres(entrepriseId),
+            store.chargerArticles(entrepriseId),
+          ])
+        : [[], [], []];
+      if (!vivant) return;
+      setNomenclatures(noms);
+      setOrdres(ords);
+      // Stock disponible des composants = snapshot du module Stocks (Supabase).
+      setStock(arts.map((a) => ({ ref: a.ref, quantite: a.quantite })));
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Calcul des besoins (MRP) par le moteur (server action), debounce leger.
   useEffect(() => {
@@ -120,29 +130,54 @@ export function ProductionClient() {
 
   const coutOrdreParIndex = resultat?.ordres ?? [];
 
-  function enregistrerOrdre(o: OrdreLocal) {
-    if (!o.produit.trim() || o.quantite <= 0) return;
-    setOrdres((prev) => {
-      if (o.id) return prev.map((x) => (x.id === o.id ? o : x));
-      return [{ ...o, id: genId() }, ...prev];
-    });
-    setEditionOrdre(null);
+  async function enregistrerOrdre(o: OrdreLocal) {
+    if (!o.produit.trim() || o.quantite <= 0 || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerOrdre(entrepriseId, o);
+      setOrdres((prev) => (o.id ? prev.map((x) => (x.id === o.id ? saved : x)) : [saved, ...prev]));
+      setEditionOrdre(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
-  function supprimerOrdre(id: string) {
-    setOrdres((prev) => prev.filter((o) => o.id !== id));
+  async function supprimerOrdre(id: string) {
+    try {
+      await store.supprimerOrdre(id);
+      setOrdres((prev) => prev.filter((o) => o.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function enregistrerNom(n: NomenclatureLocal) {
-    if (!n.produit.trim()) return;
+  async function enregistrerNom(n: NomenclatureLocal) {
+    if (!n.produit.trim() || !entrepriseId) return;
     const nette = { ...n, composants: n.composants.filter((c) => c.ref.trim()) };
-    setNomenclatures((prev) => {
-      if (nette.id) return prev.map((x) => (x.id === nette.id ? nette : x));
-      return [...prev, { ...nette, id: genId() }];
-    });
-    setEditionNom(null);
+    try {
+      const saved = await store.enregistrerNomenclature(entrepriseId, nette);
+      setNomenclatures((prev) => (nette.id ? prev.map((x) => (x.id === nette.id ? saved : x)) : [...prev, saved]));
+      setEditionNom(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
-  function supprimerNom(id: string) {
-    setNomenclatures((prev) => prev.filter((n) => n.id !== id));
+  async function supprimerNom(id: string) {
+    try {
+      await store.supprimerNomenclature(id);
+      setNomenclatures((prev) => prev.filter((n) => n.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Production / MRP" sousTitre="Nomenclatures, ordres de fabrication et besoins matiere." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour planifier sa production.
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -161,6 +196,11 @@ export function ProductionClient() {
           </div>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Ordres" value={ordres.length} icon="production" />

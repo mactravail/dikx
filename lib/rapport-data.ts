@@ -1,17 +1,23 @@
 /**
- * Etat de travail LOCAL du module RAPPORT FINANCIER, SCOPE par entreprise active.
+ * Contrat de donnees du module RAPPORT FINANCIER, SCOPE par entreprise active.
  *
- * Persiste dans le `localStorage` du navigateur en attendant Supabase
- * (db/migrations/0008_rapport.sql). Contrairement aux autres stores, ce module
- * ne porte AUCUN chiffre issu de l'activite : les montants de l'exercice sont
- * TOUJOURS recalcules par les moteurs (server action). On ne stocke ici que :
+ * Persiste dans SUPABASE (table `rapport_financier`, 0008 + RLS 0014) via les
+ * server actions de app/(app)/rapports/data-actions.ts. Le `store` ci-dessous ne
+ * fait que deleguer a ces actions (methodes ASYNC, prenant l'id de l'entreprise).
+ *
+ * Contrairement aux autres stores, ce module ne porte AUCUN chiffre issu de
+ * l'activite : les montants de l'exercice sont TOUJOURS recalcules par les
+ * moteurs (server action). On ne stocke ici que :
  *   - le NARRATIF redige par le comptable (texte libre, pas un chiffre) ;
  *   - les parametres du rapport (exercice, periode) ;
  *   - les REFERENCES saisies a la main (N-1, budget) — des saisies, pas des
  *     totaux calcules par l'UI.
  */
 
-import { scopedKey } from "./entreprise-active";
+import {
+  chargerRapportAction,
+  sauverRapportAction,
+} from "@/app/(app)/rapports/data-actions";
 
 /** Grandeurs de reference d'un exercice (N-1) ou d'un budget — saisies. */
 export interface ComparatifSaisie {
@@ -74,33 +80,12 @@ export function brouillonParDefaut(): RapportBrouillon {
 }
 
 /* -------------------------------- stockage -------------------------------- */
-
-const SUFFIXE = "rapport.brouillon";
+// Delegue a Supabase (server actions, RLS). Methodes ASYNC scopees par l'id de
+// l'entreprise active (fourni par le contexte cote client).
 
 export const store = {
-  charger(): RapportBrouillon {
-    if (typeof window === "undefined") return brouillonParDefaut();
-    try {
-      const brut = window.localStorage.getItem(scopedKey(SUFFIXE));
-      if (!brut) return brouillonParDefaut();
-      const val = JSON.parse(brut) as Partial<RapportBrouillon>;
-      // Fusion avec les defauts : tolerant aux brouillons anterieurs incomplets.
-      return {
-        ...brouillonParDefaut(),
-        ...val,
-        exercicePrecedent: { ...COMPARATIF_VIDE, ...val.exercicePrecedent },
-        budget: { ...COMPARATIF_VIDE, ...val.budget },
-      };
-    } catch {
-      return brouillonParDefaut();
-    }
-  },
-  sauver(b: RapportBrouillon): void {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(scopedKey(SUFFIXE), JSON.stringify(b));
-    } catch {
-      /* quota / mode prive : on ignore, l'etat reste en memoire */
-    }
-  },
+  /** Charge le rapport le plus recent de l'entreprise (null si aucun). */
+  charger: (entrepriseId: string): Promise<RapportBrouillon | null> => chargerRapportAction(entrepriseId),
+  /** Enregistre (upsert par exercice) le brouillon de rapport de l'entreprise. */
+  sauver: (entrepriseId: string, b: RapportBrouillon): Promise<void> => sauverRapportAction(entrepriseId, b),
 };

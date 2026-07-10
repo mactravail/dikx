@@ -1,15 +1,31 @@
 /**
- * Etat de travail LOCAL du module Ventes (clients, documents, opportunites).
+ * Contrat de donnees du module Ventes (clients, documents, opportunites).
  *
- * Persiste dans le `localStorage` du navigateur en attendant le branchement
- * Supabase (la table `clients`/`documents` existe deja : db/migrations/0002).
+ * Persiste dans SUPABASE (clients/documents 0002, opportunites 0014), sous RLS
+ * scopee par entreprise, via les server actions des modules clients/facturation/crm.
+ * Le `store` ci-dessous ne fait que deleguer a ces actions (methodes ASYNC).
  *
  * Regle raktak respectee : les seuls montants stockes ici sont des SNAPSHOTS
  * renvoyes par le moteur (server action), jamais des totaux calcules par l'UI.
  * Ce fichier ne contient donc AUCUN calcul monetaire — que du stockage.
  */
 
-import { scopedKey } from "./entreprise-active";
+import type { EtatTransmission } from "./transmission";
+import {
+  listerClientsAction,
+  upsertClientAction,
+  supprimerClientAction,
+} from "@/app/(app)/clients/data-actions";
+import {
+  listerDocumentsAction,
+  upsertDocumentAction,
+  supprimerDocumentAction,
+} from "@/app/(app)/facturation/data-actions";
+import {
+  listerOpportunitesAction,
+  upsertOpportuniteAction,
+  supprimerOpportuniteAction,
+} from "@/app/(app)/crm/data-actions";
 
 export interface ClientLocal {
   id: string;
@@ -54,6 +70,8 @@ export interface DocumentLocal {
   totalHT: number;
   totalTVA: number;
   totalTTC: number;
+  /** Etat de transmission au comptable (0013). Absent = brouillon. */
+  transmission?: EtatTransmission;
 }
 
 export interface OpportuniteLocal {
@@ -85,14 +103,6 @@ export const PROBA_PAR_ETAPE: Record<string, number> = {
   Perdu: 0,
 };
 
-// Cles SCOPEES par entreprise active (voir lib/entreprise-active.ts) : les
-// donnees d'un client ne se melangent jamais avec celles d'un autre.
-const SUFFIXES = {
-  clients: "ventes.clients",
-  documents: "ventes.documents",
-  opportunites: "ventes.opportunites",
-} as const;
-
 /* ----------------------------- identifiants ----------------------------- */
 
 export function genId(): string {
@@ -120,120 +130,21 @@ export function prochainNumero(
 }
 
 /* ------------------------------- stockage ------------------------------- */
-
-function load<T>(key: string, seed: T[]): T[] {
-  if (typeof window === "undefined") return seed;
-  try {
-    const brut = window.localStorage.getItem(key);
-    if (!brut) return seed;
-    const val = JSON.parse(brut);
-    return Array.isArray(val) ? (val as T[]) : seed;
-  } catch {
-    return seed;
-  }
-}
-
-function save<T>(key: string, value: T[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* quota / mode prive : on ignore, l'etat reste en memoire */
-  }
-}
+// Tout est persiste dans Supabase (RLS, scope par entreprise) via les data-actions.
+// Toutes les methodes sont ASYNC et prennent l'id de l'entreprise active.
 
 export const store = {
-  chargerClients: () => load<ClientLocal>(scopedKey(SUFFIXES.clients), SEED_CLIENTS),
-  sauverClients: (v: ClientLocal[]) => save(scopedKey(SUFFIXES.clients), v),
-  chargerDocuments: () => load<DocumentLocal>(scopedKey(SUFFIXES.documents), SEED_DOCUMENTS),
-  sauverDocuments: (v: DocumentLocal[]) => save(scopedKey(SUFFIXES.documents), v),
-  chargerOpportunites: () => load<OpportuniteLocal>(scopedKey(SUFFIXES.opportunites), SEED_OPPS),
-  sauverOpportunites: (v: OpportuniteLocal[]) => save(scopedKey(SUFFIXES.opportunites), v),
+  // Clients & documents : Supabase (RLS), methodes ASYNC scopees par entreprise.
+  chargerClients: (entrepriseId: string) => listerClientsAction(entrepriseId),
+  enregistrerClient: (entrepriseId: string, c: ClientLocal) => upsertClientAction(entrepriseId, c),
+  supprimerClient: (id: string) => supprimerClientAction(id),
+  chargerDocuments: (entrepriseId: string) => listerDocumentsAction(entrepriseId),
+  /** Cree (id vide) ou met a jour un document ; renvoie le snapshot persiste. */
+  enregistrerDocument: (entrepriseId: string, d: DocumentLocal) => upsertDocumentAction(entrepriseId, d),
+  supprimerDocument: (id: string) => supprimerDocumentAction(id),
+  // Opportunites (CRM) : Supabase (RLS), methodes ASYNC scopees par entreprise.
+  chargerOpportunites: (entrepriseId: string) => listerOpportunitesAction(entrepriseId),
+  /** Cree (id vide) ou met a jour une opportunite ; renvoie l'opportunite persistee. */
+  enregistrerOpportunite: (entrepriseId: string, o: OpportuniteLocal) => upsertOpportuniteAction(entrepriseId, o),
+  supprimerOpportunite: (id: string) => supprimerOpportuniteAction(id),
 };
-
-/* --------------------------- donnees de demo ---------------------------- */
-// Contexte PME senegalaise. Les montants des documents sont indicatifs ;
-// ils seront remplaces par le snapshot du moteur des la 1re modification.
-
-const SEED_CLIENTS: ClientLocal[] = [
-  {
-    id: "cli-demo-1",
-    raisonSociale: "Boulangerie La Teranga",
-    ninea: "0057219 2A2",
-    contactNom: "Aminata Diop",
-    telephone: "+221 77 123 45 67",
-    email: "contact@lateranga.sn",
-    ville: "Dakar",
-    delaiPaiementJours: 30,
-    actif: true,
-  },
-  {
-    id: "cli-demo-2",
-    raisonSociale: "Sourou Distribution SARL",
-    ninea: "0041882 1B1",
-    contactNom: "Modou Faye",
-    telephone: "+221 76 987 65 43",
-    email: "achats@sourou.sn",
-    ville: "Thies",
-    delaiPaiementJours: 45,
-    actif: true,
-  },
-  {
-    id: "cli-demo-3",
-    raisonSociale: "Clinique du Point E",
-    ninea: "0033471 9C3",
-    contactNom: "Dr. Ndeye Sarr",
-    telephone: "+221 78 456 78 90",
-    email: "compta@cliniquepointe.sn",
-    ville: "Dakar",
-    delaiPaiementJours: 15,
-    actif: true,
-  },
-];
-
-const SEED_DOCUMENTS: DocumentLocal[] = [
-  {
-    id: "doc-demo-1",
-    type: "facture",
-    numero: `FAC-${new Date().getFullYear()}-0001`,
-    clientId: "cli-demo-1",
-    clientNom: "Boulangerie La Teranga",
-    dateEmission: new Date().toISOString().slice(0, 10),
-    statut: "emis",
-    assujettiTVA: true,
-    remiseGlobalePct: 0,
-    lignes: [
-      { designation: "Sacs de farine T55 (50 kg)", quantite: 40, prixUnitaireHT: 22_000, tauxTVA: 0.18, remisePct: 0 },
-      { designation: "Livraison", quantite: 1, prixUnitaireHT: 25_000, tauxTVA: 0.18, remisePct: 0 },
-    ],
-    montantPaye: 0,
-    totalHT: 905_000,
-    totalTVA: 162_900,
-    totalTTC: 1_067_900,
-  },
-  {
-    id: "doc-demo-2",
-    type: "devis",
-    numero: `DEV-${new Date().getFullYear()}-0001`,
-    clientId: "cli-demo-2",
-    clientNom: "Sourou Distribution SARL",
-    dateEmission: new Date().toISOString().slice(0, 10),
-    statut: "brouillon",
-    assujettiTVA: true,
-    remiseGlobalePct: 0.05,
-    lignes: [
-      { designation: "Prestation de conseil (jours)", quantite: 8, prixUnitaireHT: 150_000, tauxTVA: 0.18, remisePct: 0 },
-    ],
-    montantPaye: 0,
-    totalHT: 1_140_000,
-    totalTVA: 205_200,
-    totalTTC: 1_345_200,
-  },
-];
-
-const SEED_OPPS: OpportuniteLocal[] = [
-  { id: "opp-demo-1", titre: "Contrat annuel farine", clientNom: "Boulangerie La Teranga", etape: "Negociation", montant: 12_000_000, probabilite: 0.7 },
-  { id: "opp-demo-2", titre: "Equipement froid", clientNom: "Sourou Distribution SARL", etape: "Proposition", montant: 4_500_000, probabilite: 0.5 },
-  { id: "opp-demo-3", titre: "Maintenance groupe electrogene", clientNom: "Clinique du Point E", etape: "Qualification", montant: 2_000_000, probabilite: 0.3 },
-  { id: "opp-demo-4", titre: "Fourniture consommables", clientNom: "Clinique du Point E", etape: "Prospection", montant: 800_000, probabilite: 0.1 },
-];

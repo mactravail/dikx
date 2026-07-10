@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { Card, PageHeading, RegimeBadge } from "../ui";
 import { Icon } from "../icons";
 import { useEntreprise } from "../../lib/entreprise-context";
+import { InvitationEntreprise } from "./InvitationEntreprise";
 import type { EntrepriseBrouillon } from "../../lib/entreprise-store";
 import {
   LIBELLE_FORME_JURIDIQUE,
@@ -41,18 +42,25 @@ export function EntreprisesClient() {
   const [formOuvert, setFormOuvert] = useState(false);
   const [b, setB] = useState<EntrepriseBrouillon>(BROUILLON_VIDE);
 
-  const ouvrir = (id: string) => {
-    changerActive(id);
+  const [enCours, setEnCours] = useState(false);
+
+  const ouvrir = async (id: string) => {
+    await changerActive(id);
     router.push("/");
   };
 
-  const soumettre = (e: React.FormEvent) => {
+  const soumettre = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!b.raisonSociale.trim()) return;
-    const ent = creer(b);
-    setB(BROUILLON_VIDE);
-    setFormOuvert(false);
-    ouvrir(ent.id);
+    if (!b.raisonSociale.trim() || enCours) return;
+    setEnCours(true);
+    try {
+      const ent = await creer(b);
+      setB(BROUILLON_VIDE);
+      setFormOuvert(false);
+      await ouvrir(ent.id);
+    } finally {
+      setEnCours(false);
+    }
   };
 
   return (
@@ -220,9 +228,10 @@ export function EntreprisesClient() {
               </button>
               <button
                 type="submit"
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                disabled={enCours}
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
               >
-                Creer et ouvrir
+                {enCours ? "Creation…" : "Creer et ouvrir"}
               </button>
             </div>
           </form>
@@ -282,13 +291,13 @@ export function EntreprisesClient() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     if (
                       window.confirm(
-                        `Supprimer « ${e.raisonSociale} » du portefeuille ? Les donnees locales de cette entreprise seront perdues.`,
+                        `Supprimer « ${e.raisonSociale} » du portefeuille ? Les donnees de cette entreprise seront perdues.`,
                       )
                     ) {
-                      supprimer(e.id);
+                      await supprimer(e.id);
                     }
                   }}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-red-600"
@@ -297,6 +306,8 @@ export function EntreprisesClient() {
                   <Icon name="close" className="h-4 w-4" />
                 </button>
               </div>
+
+              <InvitationEntreprise entrepriseId={e.id} />
             </Card>
           );
         })}

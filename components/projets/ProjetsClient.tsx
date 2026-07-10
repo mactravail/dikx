@@ -12,7 +12,6 @@ import { calculerProjetsAction } from "../../app/(app)/projets/actions";
 import type { ResultatProjets, StatutTache } from "../../lib/engine";
 import {
   store,
-  genId,
   STATUTS_TACHE,
   STATUTS_PROJET,
   libelleStatutTache,
@@ -21,6 +20,7 @@ import {
   type TacheLocal,
   type StatutProjet,
 } from "../../lib/organisation-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -56,6 +56,8 @@ function projetVide(): ProjetLocal {
 }
 
 export function ProjetsClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [projets, setProjets] = useState<ProjetLocal[]>([]);
   const [taches, setTaches] = useState<TacheLocal[]>([]);
   const [pret, setPret] = useState(false);
@@ -63,21 +65,26 @@ export function ProjetsClient() {
   const [editionTache, setEditionTache] = useState<TacheLocal | null>(null);
   const [editionProjet, setEditionProjet] = useState<ProjetLocal | null>(null);
   const [filtre, setFiltre] = useState<string>("tous");
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des projets & taches de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setProjets(store.chargerProjets());
-    setTaches(store.chargerTaches());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverProjets(projets);
-  }, [projets, pret]);
-
-  useEffect(() => {
-    if (pret) store.sauverTaches(taches);
-  }, [taches, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const [ps, ts] = entrepriseId
+        ? await Promise.all([store.chargerProjets(entrepriseId), store.chargerTaches(entrepriseId)])
+        : [[], []];
+      if (!vivant) return;
+      setProjets(ps);
+      setTaches(ts);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Agregation par le moteur (server action), debounce leger.
   useEffect(() => {
@@ -116,46 +123,76 @@ export function ProjetsClient() {
     [taches, filtre],
   );
 
-  function enregistrerTache(t: TacheLocal) {
-    if (!t.titre.trim() || !t.projetId) return;
-    setTaches((prev) => {
-      if (t.id) return prev.map((x) => (x.id === t.id ? t : x));
-      return [...prev, { ...t, id: genId() }];
-    });
-    setEditionTache(null);
+  async function enregistrerTache(t: TacheLocal) {
+    if (!t.titre.trim() || !t.projetId || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerTache(entrepriseId, t);
+      setTaches((prev) => (t.id ? prev.map((x) => (x.id === t.id ? saved : x)) : [...prev, saved]));
+      setEditionTache(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimerTache(id: string) {
-    setTaches((prev) => prev.filter((t) => t.id !== id));
+  async function supprimerTache(id: string) {
+    try {
+      await store.supprimerTache(id);
+      setTaches((prev) => prev.filter((t) => t.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function deplacer(id: string, direction: -1 | 1) {
-    setTaches((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const idx = STATUT_ORDRE.indexOf(t.statut);
-        const suivant = Math.min(STATUT_ORDRE.length - 1, Math.max(0, idx + direction));
-        return { ...t, statut: STATUT_ORDRE[suivant] ?? t.statut };
-      }),
-    );
+  async function deplacer(id: string, direction: -1 | 1) {
+    if (!entrepriseId) return;
+    const cur = taches.find((t) => t.id === id);
+    if (!cur) return;
+    const idx = STATUT_ORDRE.indexOf(cur.statut);
+    const suivant = Math.min(STATUT_ORDRE.length - 1, Math.max(0, idx + direction));
+    const modifiee = { ...cur, statut: STATUT_ORDRE[suivant] ?? cur.statut };
+    try {
+      const saved = await store.enregistrerTache(entrepriseId, modifiee);
+      setTaches((prev) => prev.map((t) => (t.id === id ? saved : t)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function enregistrerProjet(p: ProjetLocal) {
-    if (!p.nom.trim()) return;
-    setProjets((prev) => {
-      if (p.id) return prev.map((x) => (x.id === p.id ? p : x));
-      return [...prev, { ...p, id: genId() }];
-    });
-    setEditionProjet(null);
+  async function enregistrerProjet(p: ProjetLocal) {
+    if (!p.nom.trim() || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerProjet(entrepriseId, p);
+      setProjets((prev) => (p.id ? prev.map((x) => (x.id === p.id ? saved : x)) : [...prev, saved]));
+      setEditionProjet(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimerProjet(id: string) {
-    setProjets((prev) => prev.filter((p) => p.id !== id));
-    setTaches((prev) => prev.filter((t) => t.projetId !== id));
-    if (filtre === id) setFiltre("tous");
+  async function supprimerProjet(id: string) {
+    try {
+      await store.supprimerProjet(id);
+      // Les taches du projet partent en cascade cote base : on les retire aussi ici.
+      setProjets((prev) => prev.filter((p) => p.id !== id));
+      setTaches((prev) => prev.filter((t) => t.projetId !== id));
+      if (filtre === id) setFiltre("tous");
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
   const aucunProjet = projets.length === 0;
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Projets & Taches" sousTitre="Kanban des taches et suivi d'avancement." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer ses projets et taches.
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -173,6 +210,11 @@ export function ProjetsClient() {
           </div>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Projets" value={projets.length} icon="projets" />

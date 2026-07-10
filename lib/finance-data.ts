@@ -1,8 +1,9 @@
 /**
- * Etat de travail LOCAL du pole Finance (depenses + ecritures comptables).
+ * Contrat de donnees du pole Finance (depenses + ecritures comptables).
  *
- * Persiste dans le `localStorage` du navigateur en attendant le branchement
- * Supabase (tables prevues : db/migrations/0003_finance.sql).
+ * Persiste dans SUPABASE (tables 0003 + entreprise_id 0011/0014), sous RLS
+ * scopee par entreprise, via les server actions charges/comptabilite. Le `store`
+ * ci-dessous ne fait que deleguer a ces actions (methodes ASYNC).
  *
  * Regle raktak respectee : ce fichier ne contient AUCUN calcul monetaire. Les
  * seuls montants stockes ici sont soit des SAISIES (HT, debit, credit), soit des
@@ -11,12 +12,22 @@
  * REFERENCE (pas des taux fiscaux) : ils servent la saisie, pas le calcul.
  */
 
-import { scopedKey } from "./entreprise-active";
 import type {
   CategorieDepense,
   CompteComptable,
   Recurrence,
 } from "./engine";
+import type { EtatTransmission } from "./transmission";
+import {
+  listerDepensesAction,
+  upsertDepenseAction,
+  supprimerDepenseAction,
+} from "@/app/(app)/charges/data-actions";
+import {
+  listerEcrituresAction,
+  upsertEcritureAction,
+  supprimerEcritureAction,
+} from "@/app/(app)/comptabilite/data-actions";
 
 /* ---------------------------- Charges & depenses ---------------------------- */
 
@@ -31,6 +42,8 @@ export interface DepenseLocal {
   fournisseur?: string;
   // Snapshot du moteur (source: server action) — jamais recalcule dans l'UI.
   montantTTC: number;
+  /** Etat de transmission au comptable (0013). Absent = brouillon. */
+  transmission?: EtatTransmission;
 }
 
 /** Libelles d'affichage des categories de charge. */
@@ -181,89 +194,19 @@ export function genId(): string {
 }
 
 /* ------------------------------- stockage ------------------------------- */
-
-// Suffixes SCOPES par entreprise active (voir lib/entreprise-active.ts).
-const SUFFIXES = {
-  depenses: "finance.depenses",
-  ecritures: "finance.ecritures",
-} as const;
-
-function load<T>(key: string, seed: T[]): T[] {
-  if (typeof window === "undefined") return seed;
-  try {
-    const brut = window.localStorage.getItem(key);
-    if (!brut) return seed;
-    const val = JSON.parse(brut);
-    return Array.isArray(val) ? (val as T[]) : seed;
-  } catch {
-    return seed;
-  }
-}
-
-function save<T>(key: string, value: T[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* quota / mode prive : on ignore, l'etat reste en memoire */
-  }
-}
+// Depenses & ecritures sont persistees dans Supabase (RLS, scope par entreprise)
+// via les data-actions. Toutes les methodes sont ASYNC et prennent l'id de
+// l'entreprise active (fourni par le contexte cote client).
 
 export const store = {
-  chargerDepenses: () => load<DepenseLocal>(scopedKey(SUFFIXES.depenses), SEED_DEPENSES),
-  sauverDepenses: (v: DepenseLocal[]) => save(scopedKey(SUFFIXES.depenses), v),
-  chargerEcritures: () => load<EcritureLocal>(scopedKey(SUFFIXES.ecritures), SEED_ECRITURES),
-  sauverEcritures: (v: EcritureLocal[]) => save(scopedKey(SUFFIXES.ecritures), v),
+  // Depenses : Supabase (RLS), methodes ASYNC scopees par entreprise active.
+  chargerDepenses: (entrepriseId: string) => listerDepensesAction(entrepriseId),
+  /** Cree (id vide) ou met a jour une depense ; renvoie le snapshot persiste. */
+  enregistrerDepense: (entrepriseId: string, d: DepenseLocal) => upsertDepenseAction(entrepriseId, d),
+  supprimerDepense: (id: string) => supprimerDepenseAction(id),
+  // Ecritures comptables : Supabase (RLS), methodes ASYNC scopees par entreprise.
+  chargerEcritures: (entrepriseId: string) => listerEcrituresAction(entrepriseId),
+  /** Cree (id vide) ou met a jour une ecriture ; renvoie le snapshot persiste. */
+  enregistrerEcriture: (entrepriseId: string, e: EcritureLocal) => upsertEcritureAction(entrepriseId, e),
+  supprimerEcriture: (id: string) => supprimerEcritureAction(id),
 };
-
-/* --------------------------- donnees de demo ---------------------------- */
-// Contexte PME senegalaise. Les montants TTC des depenses sont indicatifs ;
-// ils seront remplaces par le snapshot du moteur des la 1re modification.
-
-const ANNEE = new Date().getFullYear();
-
-const SEED_DEPENSES: DepenseLocal[] = [
-  { id: "dep-demo-1", date: `${ANNEE}-01-05`, libelle: "Loyer local commercial", categorie: "loyer", montantHT: 300_000, tauxTVA: 0, recurrence: "mensuelle", fournisseur: "SCI Plateau", montantTTC: 300_000 },
-  { id: "dep-demo-2", date: `${ANNEE}-01-08`, libelle: "Facture SENELEC", categorie: "energie", montantHT: 120_000, tauxTVA: 0.18, recurrence: "mensuelle", fournisseur: "SENELEC", montantTTC: 141_600 },
-  { id: "dep-demo-3", date: `${ANNEE}-01-10`, libelle: "Abonnement fibre + telephonie", categorie: "telecom", montantHT: 45_000, tauxTVA: 0.18, recurrence: "mensuelle", fournisseur: "Sonatel", montantTTC: 53_100 },
-  { id: "dep-demo-4", date: `${ANNEE}-01-15`, libelle: "Honoraires comptable", categorie: "honoraires", montantHT: 150_000, tauxTVA: 0.18, recurrence: "trimestrielle", fournisseur: "Cabinet Diallo", montantTTC: 177_000 },
-  { id: "dep-demo-5", date: `${ANNEE}-01-20`, libelle: "Carburant vehicule de livraison", categorie: "transport", montantHT: 80_000, tauxTVA: 0, recurrence: "mensuelle", montantTTC: 80_000 },
-];
-
-const SEED_ECRITURES: EcritureLocal[] = [
-  {
-    id: "ecr-demo-1",
-    date: `${ANNEE}-01-08`,
-    journal: "AC",
-    libelle: "Facture fournisseur — SENELEC",
-    reference: "FAC-SEN-0192",
-    lignes: [
-      { compte: "605", libelle: "Autres achats (eau, electricite, carburant)", debit: 120_000, credit: 0 },
-      { compte: "4452", libelle: "Etat, TVA recuperable (deductible)", debit: 21_600, credit: 0 },
-      { compte: "401", libelle: "Fournisseurs", debit: 0, credit: 141_600 },
-    ],
-  },
-  {
-    id: "ecr-demo-2",
-    date: `${ANNEE}-01-12`,
-    journal: "VT",
-    libelle: "Facture client — Boulangerie La Teranga",
-    reference: "FAC-2026-0001",
-    lignes: [
-      { compte: "411", libelle: "Clients", debit: 1_067_900, credit: 0 },
-      { compte: "701", libelle: "Ventes de marchandises", debit: 0, credit: 905_000 },
-      { compte: "4431", libelle: "Etat, TVA facturee (collectee)", debit: 0, credit: 162_900 },
-    ],
-  },
-  {
-    id: "ecr-demo-3",
-    date: `${ANNEE}-01-15`,
-    journal: "BQ",
-    libelle: "Reglement client par virement",
-    reference: "VIR-0043",
-    lignes: [
-      { compte: "521", libelle: "Banques", debit: 1_067_900, credit: 0 },
-      { compte: "411", libelle: "Clients", debit: 0, credit: 1_067_900 },
-    ],
-  },
-];

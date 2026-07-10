@@ -1,21 +1,30 @@
 /**
- * Etat de travail LOCAL du module TRESORERIE (comptes de disponibilites +
- * mouvements). Persiste dans le `localStorage` du navigateur, SCOPE par
- * entreprise active, en attendant le branchement Supabase (table prevue :
- * db/migrations/0006_tresorerie.sql).
+ * Module TRESORERIE — contrat de donnees + reference de saisie.
  *
- * Regle raktak respectee : ce fichier ne contient AUCUN calcul monetaire. Les
- * seuls montants stockes sont des SAISIES (solde initial, montant d'un
- * mouvement). Les soldes courants et les totaux viennent du moteur (server
- * action). Les listes ci-dessous (types, operateurs, categories) sont des
- * donnees de REFERENCE pour la saisie, pas des taux.
+ * Persistance dans SUPABASE (tables 0007), sous RLS scopee par entreprise, via
+ * les server actions de app/(app)/tresorerie/data-actions.ts. Le `store` ci-dessous
+ * ne fait que deleguer a ces actions (methodes ASYNC, prenant l'id de l'entreprise
+ * active).
+ *
+ * Regle raktak : aucun calcul monetaire ici. Les seuls montants manipules sont
+ * des SAISIES (solde initial, montant d'un mouvement). Soldes courants et totaux
+ * viennent du moteur (calculerTresorerie, cote serveur). Les listes ci-dessous
+ * (types, operateurs, categories) sont des donnees de REFERENCE, pas des taux.
  */
 
-import { scopedKey } from "./entreprise-active";
 import type {
   TypeCompteTresorerie,
   SensMouvement,
 } from "./engine";
+import type { EtatTransmission } from "./transmission";
+import {
+  listerComptesAction,
+  listerMouvementsAction,
+  upsertCompteAction,
+  supprimerCompteAction,
+  enregistrerMouvementAction,
+  supprimerMouvementAction,
+} from "@/app/(app)/tresorerie/data-actions";
 
 /* --------------------------------- modeles --------------------------------- */
 
@@ -36,6 +45,8 @@ export interface MouvementLocal {
   categorie: string;
   /** « Pourquoi / a qui / pour quoi » — porte tel quel, non utilise au calcul. */
   motif: string;
+  /** Etat de transmission au comptable (0013). Absent = brouillon. */
+  transmission?: EtatTransmission;
 }
 
 /* ------------------------------- reference -------------------------------- */
@@ -111,60 +122,18 @@ export function genId(): string {
 }
 
 /* -------------------------------- stockage -------------------------------- */
-
-const SUFFIXES = {
-  comptes: "tresorerie.comptes",
-  mouvements: "tresorerie.mouvements",
-} as const;
-
-function load<T>(key: string, seed: T[]): T[] {
-  if (typeof window === "undefined") return seed;
-  try {
-    const brut = window.localStorage.getItem(key);
-    if (!brut) return seed;
-    const val = JSON.parse(brut);
-    return Array.isArray(val) ? (val as T[]) : seed;
-  } catch {
-    return seed;
-  }
-}
-
-function save<T>(key: string, value: T[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* quota / mode prive : on ignore, l'etat reste en memoire */
-  }
-}
+// Delegue a Supabase (server actions, RLS). Toutes les methodes sont ASYNC et
+// prennent l'id de l'entreprise active (fourni par le contexte cote client).
 
 export const store = {
-  chargerComptes: () => load<CompteTresorerieLocal>(scopedKey(SUFFIXES.comptes), SEED_COMPTES),
-  sauverComptes: (v: CompteTresorerieLocal[]) => save(scopedKey(SUFFIXES.comptes), v),
-  chargerMouvements: () => load<MouvementLocal>(scopedKey(SUFFIXES.mouvements), SEED_MOUVEMENTS),
-  sauverMouvements: (v: MouvementLocal[]) => save(scopedKey(SUFFIXES.mouvements), v),
+  chargerComptes: (entrepriseId: string) => listerComptesAction(entrepriseId),
+  chargerMouvements: (entrepriseId: string) => listerMouvementsAction(entrepriseId),
+  /** Cree (id vide) ou met a jour un compte ; renvoie le compte persiste. */
+  enregistrerCompte: (entrepriseId: string, c: CompteTresorerieLocal) =>
+    upsertCompteAction(entrepriseId, c),
+  supprimerCompte: (id: string) => supprimerCompteAction(id),
+  /** Cree (id vide) ou met a jour un mouvement ; renvoie le mouvement persiste. */
+  enregistrerMouvement: (entrepriseId: string, m: MouvementLocal) =>
+    enregistrerMouvementAction(entrepriseId, m),
+  supprimerMouvement: (id: string) => supprimerMouvementAction(id),
 };
-
-/* ---------------------------- donnees de demo ----------------------------- */
-// Contexte PME senegalaise. Montants indicatifs ; les soldes courants affiches
-// sont TOUJOURS recalcules par le moteur, jamais lus depuis ces seeds.
-
-const ANNEE = new Date().getFullYear();
-const M = (m: number, j: number) => `${ANNEE}-${String(m).padStart(2, "0")}-${String(j).padStart(2, "0")}`;
-
-const SEED_COMPTES: CompteTresorerieLocal[] = [
-  { id: "tr-cbao", nom: "Compte courant CBAO", type: "banque", operateur: "CBAO", soldeInitial: 2_500_000 },
-  { id: "tr-wave", nom: "Wave (caisse mobile)", type: "mobile_money", operateur: "Wave", soldeInitial: 350_000 },
-  { id: "tr-om", nom: "Orange Money", type: "mobile_money", operateur: "Orange Money", soldeInitial: 180_000 },
-  { id: "tr-caisse", nom: "Caisse principale", type: "caisse", soldeInitial: 120_000 },
-];
-
-const SEED_MOUVEMENTS: MouvementLocal[] = [
-  { id: "mv-1", compteId: "tr-cbao", date: M(1, 6), sens: "entree", montant: 1_200_000, categorie: "encaissement_client", motif: "Virement client Boulangerie La Teranga (FAC-2026-0001)" },
-  { id: "mv-2", compteId: "tr-cbao", date: M(1, 10), sens: "sortie", montant: 708_000, categorie: "fournisseurs", motif: "Reglement fournisseur — approvisionnement matieres" },
-  { id: "mv-3", compteId: "tr-cbao", date: M(1, 28), sens: "sortie", montant: 450_000, categorie: "salaires", motif: "Virement salaires equipe (janvier)" },
-  { id: "mv-4", compteId: "tr-wave", date: M(1, 12), sens: "entree", montant: 240_000, categorie: "vente_comptant", motif: "Ventes boutique payees par Wave" },
-  { id: "mv-5", compteId: "tr-wave", date: M(1, 15), sens: "sortie", montant: 60_000, categorie: "transport", motif: "Livraisons — carburant & course" },
-  { id: "mv-6", compteId: "tr-om", date: M(1, 18), sens: "sortie", montant: 35_000, categorie: "frais_bancaires", motif: "Frais de retrait Orange Money" },
-  { id: "mv-7", compteId: "tr-caisse", date: M(1, 20), sens: "sortie", montant: 25_000, categorie: "loyer", motif: "Appoint gardiennage" },
-];

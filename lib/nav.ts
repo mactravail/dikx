@@ -7,6 +7,7 @@
  *   - "bientot" : module planifie, page de presentation (roadmap) en attendant.
  */
 import type { IconName } from "../components/icons";
+import type { AppRole } from "./session-context";
 
 export type ModuleStatut = "actif" | "bientot";
 
@@ -257,4 +258,83 @@ export const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 export function findItem(href: string): NavItem | undefined {
   return ALL_ITEMS.find((i) => i.href === href);
+}
+
+/* --------------------------- navigation par role -------------------------- */
+
+/**
+ * Modules reserves au COMPTABLE (travail comptable + pilotage). L'utilisateur
+ * « entreprise » ne voit que les modules de SAISIE de son activite (tableau de
+ * bord, tresorerie/entrees-sorties, facturation, clients, stocks, charges, RH).
+ */
+const HREFS_COMPTABLE_ONLY = new Set<string>([
+  "/entreprises",
+  "/previsionnel",
+  "/rapports",
+  "/comptabilite",
+  "/achats",
+  "/fournisseurs",
+  "/production",
+  "/crm",
+  "/projets",
+]);
+
+/** Un module est-il accessible a ce role ? */
+export function itemAutorise(href: string, role: AppRole): boolean {
+  if (role === "comptable") return true;
+  return !HREFS_COMPTABLE_ONLY.has(href);
+}
+
+/** Groupes de navigation filtres pour un role (groupes vides retires). */
+export function navPourRole(role: AppRole): NavGroup[] {
+  if (role === "comptable") return NAV_GROUPS;
+  return NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => itemAutorise(i.href, role)),
+  })).filter((g) => g.items.length > 0);
+}
+
+/** true si le chemin demande est autorise pour ce role (gating serveur). */
+export function cheminAutorise(pathname: string, role: AppRole): boolean {
+  if (role === "comptable") return true;
+  if (pathname === "/") return true;
+  const item = ALL_ITEMS.find((i) => i.href !== "/" && pathname.startsWith(i.href));
+  if (!item) return true; // routes hors modules (gerees ailleurs)
+  return itemAutorise(item.href, role);
+}
+
+/* ----------------------- barre d'onglets basse (mobile) ------------------- */
+
+/** Raccourci compact pour la barre de navigation basse au pouce (mobile). */
+export interface NavRaccourci {
+  href: string;
+  label: string;
+  icon: IconName;
+}
+
+/** Libelles courts adaptes a la barre basse (place limitee). */
+const LABEL_BAS: Record<string, string> = {
+  "/": "Accueil",
+  "/tresorerie": "Tresor.",
+  "/facturation": "Factures",
+  "/charges": "Charges",
+  "/entreprises": "Dossiers",
+  "/rapports": "Rapports",
+};
+
+// Ordre = ordre d'apparition dans la barre. L'entreprise voit d'abord ses ecrans
+// de SAISIE (tresorerie, factures, charges) ; le comptable voit le pilotage.
+const HREFS_BAS_ENTREPRISE = ["/", "/tresorerie", "/facturation", "/charges"];
+const HREFS_BAS_COMPTABLE = ["/", "/entreprises", "/tresorerie", "/rapports"];
+
+/**
+ * Raccourcis de la barre d'onglets basse (mobile). 4 items max, filtres par
+ * role ; l'AppShell y ajoute un bouton « Menu » ouvrant le tiroir complet.
+ */
+export function navMobileBas(role: AppRole): NavRaccourci[] {
+  const hrefs = role === "entreprise" ? HREFS_BAS_ENTREPRISE : HREFS_BAS_COMPTABLE;
+  return hrefs
+    .map((h) => ALL_ITEMS.find((i) => i.href === h))
+    .filter((i): i is NavItem => !!i && itemAutorise(i.href, role))
+    .map((i) => ({ href: i.href, label: LABEL_BAS[i.href] ?? i.label, icon: i.icon }));
 }

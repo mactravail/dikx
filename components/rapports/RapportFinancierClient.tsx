@@ -73,24 +73,47 @@ export function RapportFinancierClient() {
   } | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Hydratation du brouillon depuis le localStorage scope (client only).
+  // Hydratation du brouillon depuis Supabase (rapport le plus recent de l'entreprise).
   useEffect(() => {
-    setB(rapportStore.charger());
-    setPret(true);
-  }, []);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const charge = active?.id ? await rapportStore.charger(active.id) : null;
+      if (!vivant) return;
+      setB(charge ?? brouillonParDefaut());
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [active?.id]);
 
-  // Persistance du brouillon.
+  // Persistance du brouillon (Supabase), autosave debounce pour ne pas ecrire a chaque frappe.
   useEffect(() => {
-    if (pret) rapportStore.sauver(b);
-  }, [b, pret]);
+    if (!pret || !active?.id) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const eid = active.id;
+    saveTimer.current = setTimeout(() => {
+      rapportStore.sauver(eid, b).catch((e) => setErreur((e as Error).message));
+    }, 600);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [b, pret, active?.id]);
 
   // Recalcul (moteurs) a chaque changement de reference/comparaison, debounce.
   useEffect(() => {
     if (!pret) return;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      const ecritures = financeStore.chargerEcritures().map((e) => ({
+      const [ecrituresBrutes, comptesBruts, mouvementsBruts] = await Promise.all([
+        active?.id ? financeStore.chargerEcritures(active.id) : Promise.resolve([]),
+        tresoStore.chargerComptes(active?.id ?? ""),
+        tresoStore.chargerMouvements(active?.id ?? ""),
+      ]);
+      const ecritures = ecrituresBrutes.map((e) => ({
         date: e.date,
         journal: e.journal,
         libelle: e.libelle,
@@ -101,14 +124,14 @@ export function RapportFinancierClient() {
           credit: l.credit,
         })),
       }));
-      const comptes = tresoStore.chargerComptes().map((c) => ({
+      const comptes = comptesBruts.map((c) => ({
         id: c.id,
         nom: c.nom,
         type: c.type,
         operateur: c.operateur,
         soldeInitial: c.soldeInitial,
       }));
-      const mouvements = tresoStore.chargerMouvements().map((m) => ({
+      const mouvements = mouvementsBruts.map((m) => ({
         compteId: m.compteId,
         sens: m.sens,
         montant: m.montant,
@@ -132,7 +155,7 @@ export function RapportFinancierClient() {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [pret, b.comparerN1, b.comparerBudget, b.exercicePrecedent, b.budget]);
+  }, [pret, active?.id, b.comparerN1, b.comparerBudget, b.exercicePrecedent, b.budget]);
 
   const set = <K extends keyof RapportBrouillon>(k: K, v: RapportBrouillon[K]) =>
     setB((prev) => ({ ...prev, [k]: v }));
@@ -839,7 +862,7 @@ function Kpi({
   return (
     <div className="rounded-lg border border-slate-200 p-3">
       <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-bold text-slate-900">{valeur}</div>
+      <div className="mt-1 break-words text-lg font-bold leading-tight text-slate-900">{valeur}</div>
       {variation ? (
         <div className="mt-0.5">
           <VariationInline v={variation} inverse={inverse} suffixe="vs N-1" />

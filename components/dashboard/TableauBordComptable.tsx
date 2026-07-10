@@ -21,6 +21,7 @@ import {
   store as tresoStore,
   libelleTypeCompte,
 } from "../../lib/tresorerie-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { fcfa, pct } from "../../lib/format";
@@ -40,13 +41,21 @@ function soldeCrediteur(compta: ResultatComptabilite, numero: string): number {
 }
 
 export function TableauBordComptable() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [data, setData] = useState<Donnees | null>(null);
 
   useEffect(() => {
     let vivant = true;
     (async () => {
-      // Ecritures comptables -> compte de resultat + bilan + balance.
-      const ecritures = financeStore.chargerEcritures().map((e) => ({
+      // Ecritures comptables (Supabase, entreprise active) -> resultat + bilan + balance.
+      // Tresorerie (Supabase, entreprise active) -> disponible + repartition.
+      const [ecrituresBrutes, comptesBruts, mouvementsBruts] = await Promise.all([
+        entrepriseId ? financeStore.chargerEcritures(entrepriseId) : Promise.resolve([]),
+        tresoStore.chargerComptes(entrepriseId),
+        tresoStore.chargerMouvements(entrepriseId),
+      ]);
+      const ecritures = ecrituresBrutes.map((e) => ({
         date: e.date,
         journal: e.journal,
         libelle: e.libelle,
@@ -57,15 +66,14 @@ export function TableauBordComptable() {
           credit: l.credit,
         })),
       }));
-      // Tresorerie -> disponible + repartition.
-      const comptes = tresoStore.chargerComptes().map((c) => ({
+      const comptes = comptesBruts.map((c) => ({
         id: c.id,
         nom: c.nom,
         type: c.type,
         operateur: c.operateur,
         soldeInitial: c.soldeInitial,
       }));
-      const mouvements = tresoStore.chargerMouvements().map((m) => ({
+      const mouvements = mouvementsBruts.map((m) => ({
         compteId: m.compteId,
         sens: m.sens,
         montant: m.montant,
@@ -82,7 +90,7 @@ export function TableauBordComptable() {
     return () => {
       vivant = false;
     };
-  }, []);
+  }, [entrepriseId]);
 
   const cr = data?.etats.compteResultat;
   const treso = data?.treso;
@@ -139,6 +147,7 @@ export function TableauBordComptable() {
               Aucun compte de tresorerie. Ajoutez vos banques, caisses et comptes mobile money.
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -173,6 +182,7 @@ export function TableauBordComptable() {
                 </tr>
               </tfoot>
             </table>
+            </div>
           )}
         </Card>
 

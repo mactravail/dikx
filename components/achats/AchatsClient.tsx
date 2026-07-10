@@ -6,7 +6,7 @@
  * L'UI COLLECTE les commandes (fournisseur, lignes, receptions, reglement) ;
  * TOUS les montants (HT, TVA deductible, TTC, reste a payer, valeur a recevoir,
  * encours) viennent de la server action -> moteur teste (`calculerAchats`). Le
- * navigateur ne calcule aucun total. Etat persiste en localStorage (Supabase a venir).
+ * navigateur ne calcule aucun total. Etat persiste dans Supabase (RLS, par entreprise).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { calculerAchatsAction } from "../../app/(app)/achats/actions";
@@ -21,6 +21,7 @@ import {
   type FournisseurLocal,
 } from "../../lib/achats-stock-data";
 import type { StatutCommande } from "../../lib/engine";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -75,22 +76,33 @@ function commandeVide(commandes: CommandeLocal[]): CommandeLocal {
 }
 
 export function AchatsClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [commandes, setCommandes] = useState<CommandeLocal[]>([]);
   const [fournisseurs, setFournisseurs] = useState<FournisseurLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [resultat, setResultat] = useState<ResultatAchats | null>(null);
   const [edition, setEdition] = useState<CommandeLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des commandes + fournisseurs de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setCommandes(store.chargerCommandes());
-    setFournisseurs(store.chargerFournisseurs());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverCommandes(commandes);
-  }, [commandes, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const [cmds, fours] = entrepriseId
+        ? await Promise.all([store.chargerCommandes(entrepriseId), store.chargerFournisseurs(entrepriseId)])
+        : [[], []];
+      if (!vivant) return;
+      setCommandes(cmds);
+      setFournisseurs(fours);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Agregation des achats par le moteur (server action), debounce leger.
   useEffect(() => {
@@ -107,24 +119,35 @@ export function AchatsClient() {
   const snapParIndex = resultat?.commandes ?? [];
 
   async function enregistrer(c: CommandeLocal) {
-    if (!c.fournisseur.trim()) return;
-    // Snapshot des totaux de la commande = moteur (jamais recalcule dans l'UI).
-    const r = await calculerAchatsAction([toInput(c)]);
-    const snap = r.ok ? r.resultat.commandes[0] : undefined;
-    const enrichie: CommandeLocal = {
-      ...c,
-      totalTTC: snap?.totalTTC ?? c.totalTTC,
-      resteAPayer: snap?.resteAPayer ?? c.resteAPayer,
-    };
-    setCommandes((prev) => {
-      if (enrichie.id) return prev.map((x) => (x.id === enrichie.id ? enrichie : x));
-      return [{ ...enrichie, id: genId() }, ...prev];
-    });
-    setEdition(null);
+    if (!c.fournisseur.trim() || !entrepriseId) return;
+    try {
+      // Le snapshot des totaux est calcule par le moteur cote serveur (data-action).
+      const saved = await store.enregistrerCommande(entrepriseId, c);
+      setCommandes((prev) => (c.id ? prev.map((x) => (x.id === c.id ? saved : x)) : [saved, ...prev]));
+      setEdition(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setCommandes((prev) => prev.filter((c) => c.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerCommande(id);
+      setCommandes((prev) => prev.filter((c) => c.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Achats" sousTitre="Commandes d'achat, receptions et encours fournisseurs." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer ses achats.
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -138,6 +161,11 @@ export function AchatsClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Commandes" value={commandes.length} icon="achats" />

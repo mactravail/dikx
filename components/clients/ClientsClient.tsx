@@ -9,7 +9,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
-import { store, genId, type ClientLocal } from "../../lib/ventes-data";
+import { store, type ClientLocal } from "../../lib/ventes-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 
 function vide(): ClientLocal {
   return {
@@ -26,21 +27,28 @@ function vide(): ClientLocal {
 }
 
 export function ClientsClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [clients, setClients] = useState<ClientLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [edition, setEdition] = useState<ClientLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
 
-  // Chargement initial cote client (localStorage indisponible au SSR).
+  // Chargement des clients de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setClients(store.chargerClients());
-    setPret(true);
-  }, []);
-
-  // Persistance a chaque changement (apres le 1er chargement).
-  useEffect(() => {
-    if (pret) store.sauverClients(clients);
-  }, [clients, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const liste = entrepriseId ? await store.chargerClients(entrepriseId) : [];
+      if (!vivant) return;
+      setClients(liste);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   const filtres = useMemo(() => {
     const q = recherche.trim().toLowerCase();
@@ -54,17 +62,35 @@ export function ClientsClient() {
 
   const actifs = clients.filter((c) => c.actif).length;
 
-  function enregistrer(c: ClientLocal) {
-    if (!c.raisonSociale.trim()) return;
-    setClients((prev) => {
-      if (c.id) return prev.map((x) => (x.id === c.id ? c : x));
-      return [{ ...c, id: genId() }, ...prev];
-    });
-    setEdition(null);
+  async function enregistrer(c: ClientLocal) {
+    if (!c.raisonSociale.trim() || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerClient(entrepriseId, c);
+      setClients((prev) => (c.id ? prev.map((x) => (x.id === c.id ? saved : x)) : [saved, ...prev]));
+      setEdition(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setClients((prev) => prev.filter((c) => c.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerClient(id);
+      setClients((prev) => prev.filter((c) => c.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeading titre="Clients" sousTitre="Repertoire clients." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer ses clients.
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -78,6 +104,11 @@ export function ClientsClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatTile label="Clients" value={clients.length} icon="clients" />

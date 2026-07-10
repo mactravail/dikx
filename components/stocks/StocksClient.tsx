@@ -21,6 +21,7 @@ import {
   type ArticleLocal,
   type MouvementLocal,
 } from "../../lib/achats-stock-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import type { TypeArticle } from "../../lib/engine";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
@@ -63,24 +64,32 @@ function articleVide(): ArticleLocal {
 }
 
 export function StocksClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [articles, setArticles] = useState<ArticleLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [resultat, setResultat] = useState<ResultatStock | null>(null);
   const [edition, setEdition] = useState<ArticleLocal | null>(null);
   const [mouvementsDe, setMouvementsDe] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des articles (+ mouvements) de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setArticles(store.chargerArticles());
-    setPret(true);
-  }, []);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const liste = entrepriseId ? await store.chargerArticles(entrepriseId) : [];
+      if (!vivant) return;
+      setArticles(liste);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
-  useEffect(() => {
-    if (pret) store.sauverArticles(articles);
-  }, [articles, pret]);
-
-  // Valorisation par le moteur (server action), debounce leger. On fusionne le
-  // snapshot (quantite / CUMP / valeur) dans chaque article, par position.
+  // Valorisation d'affichage par le moteur (server action), debounce leger.
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
@@ -103,35 +112,54 @@ export function StocksClient() {
     [articles, mouvementsDe],
   );
 
-  function enregistrerArticle(a: ArticleLocal) {
-    if (!a.ref.trim() || !a.designation.trim()) return;
-    setArticles((prev) => {
-      if (a.id) return prev.map((x) => (x.id === a.id ? a : x));
-      return [...prev, { ...a, id: genId() }];
-    });
-    setEdition(null);
+  async function enregistrerArticle(a: ArticleLocal) {
+    if (!a.ref.trim() || !a.designation.trim() || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerArticle(entrepriseId, a);
+      setArticles((prev) => (a.id ? prev.map((x) => (x.id === a.id ? saved : x)) : [...prev, saved]));
+      setEdition(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimerArticle(id: string) {
-    setArticles((prev) => prev.filter((a) => a.id !== id));
-    if (mouvementsDe === id) setMouvementsDe(null);
+  async function supprimerArticle(id: string) {
+    try {
+      await store.supprimerArticle(id);
+      setArticles((prev) => prev.filter((a) => a.id !== id));
+      if (mouvementsDe === id) setMouvementsDe(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function ajouterMouvement(articleId: string, m: MouvementLocal) {
-    setArticles((prev) =>
-      prev.map((a) =>
-        a.id === articleId ? { ...a, mouvements: [...a.mouvements, m] } : a,
-      ),
-    );
+  async function ajouterMouvement(articleId: string, m: MouvementLocal) {
+    if (!entrepriseId) return;
+    try {
+      const majArticle = await store.ajouterMouvement(entrepriseId, articleId, m);
+      setArticles((prev) => prev.map((a) => (a.id === articleId ? majArticle : a)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimerMouvement(articleId: string, mouvementId: string) {
-    setArticles((prev) =>
-      prev.map((a) =>
-        a.id === articleId
-          ? { ...a, mouvements: a.mouvements.filter((m) => m.id !== mouvementId) }
-          : a,
-      ),
+  async function supprimerMouvement(articleId: string, mouvementId: string) {
+    try {
+      const majArticle = await store.supprimerMouvement(articleId, mouvementId);
+      setArticles((prev) => prev.map((a) => (a.id === articleId ? majArticle : a)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-6xl">
+        <PageHeading titre="Stocks" sousTitre="Matieres premieres et produits finis." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer son stock.
+        </Card>
+      </div>
     );
   }
 
@@ -146,6 +174,11 @@ export function StocksClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Articles" value={articles.length} icon="stocks" />

@@ -4,6 +4,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
+import { AutoFit } from "./AutoFit";
 import type { ModuleStatut } from "../lib/nav";
 import {
   LIBELLE_REGIME_COMPTABLE,
@@ -28,6 +29,26 @@ export function Card({
   );
 }
 
+/**
+ * Rend la valeur d'une tuile. Si c'est un montant formate (« 905 000 FCFA »),
+ * detache le suffixe « FCFA » et l'affiche PLUS PETIT et plus clair que le
+ * nombre. Sinon (pourcentage, compte, JSX…), rend la valeur telle quelle.
+ */
+function ValeurStat({ value }: { value: ReactNode }) {
+  const SUFFIXE = " FCFA";
+  if (typeof value === "string" && value.endsWith(SUFFIXE)) {
+    return (
+      <>
+        {value.slice(0, -SUFFIXE.length)}
+        <span className="ml-1 align-baseline text-[0.58em] font-semibold text-slate-400">
+          FCFA
+        </span>
+      </>
+    );
+  }
+  return <>{value}</>;
+}
+
 export function StatTile({
   label,
   value,
@@ -39,22 +60,26 @@ export function StatTile({
   hint?: string;
   icon?: IconName;
 }) {
+  // Mobile-first : le montant tient TOUJOURS sur une seule ligne, quelle que
+  // soit sa magnitude — `AutoFit` reduit la police jusqu'a ce qu'il rentre dans
+  // le cadre (jamais de retour a la ligne ni de scroll horizontal). Le suffixe
+  // « FCFA » est rendu plus petit que le nombre (voir ValeurStat).
   return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between">
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            {label}
-          </div>
-          <div className="mt-1 text-2xl font-semibold text-slate-800">{value}</div>
-          {hint && <div className="mt-0.5 text-xs text-slate-400">{hint}</div>}
+    <Card className="p-3.5 sm:p-4">
+      <div className="flex items-start justify-between gap-1.5">
+        <div className="min-w-0 text-[11px] font-medium uppercase leading-tight tracking-wide text-slate-500">
+          {label}
         </div>
         {icon && (
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
-            <Icon name={icon} className="h-5 w-5" />
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <Icon name={icon} className="h-[18px] w-[18px]" />
           </span>
         )}
       </div>
+      <AutoFit className="mt-2 font-semibold leading-tight text-slate-800" max={20} min={11}>
+        <ValeurStat value={value} />
+      </AutoFit>
+      {hint && <div className="mt-1 truncate text-[11px] text-slate-400">{hint}</div>}
     </Card>
   );
 }
@@ -143,7 +168,7 @@ export function BoutonLien({
   icon?: IconName;
 }) {
   const base =
-    "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors";
+    "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors sm:py-2";
   const styles =
     variante === "primary"
       ? "bg-brand-600 text-white hover:bg-brand-700"

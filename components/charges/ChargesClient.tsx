@@ -19,12 +19,16 @@ import type {
 } from "../../lib/engine";
 import {
   store,
-  genId,
   CATEGORIES_DEPENSE,
   RECURRENCES,
   libelleCategorie,
   type DepenseLocal,
 } from "../../lib/finance-data";
+import { useEntreprise } from "../../lib/entreprise-context";
+import { useSession } from "../../lib/session-context";
+import { estEnvoye } from "../../lib/transmission";
+import { rappelerAction } from "../../app/(app)/transmission/data-actions";
+import { BadgeTransmission } from "../BadgeTransmission";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost, inputCls } from "../ventes/form";
@@ -58,22 +62,33 @@ function depenseVide(): DepenseLocal {
 }
 
 export function ChargesClient() {
+  const { active } = useEntreprise();
+  const { role } = useSession();
+  const estEntreprise = role === "entreprise";
+  const entrepriseId = active?.id ?? "";
   const [depenses, setDepenses] = useState<DepenseLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [resultat, setResultat] = useState<ResultatDepenses | null>(null);
   const [edition, setEdition] = useState<DepenseLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des depenses de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setDepenses(store.chargerDepenses());
-    setPret(true);
-  }, []);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const liste = entrepriseId ? await store.chargerDepenses(entrepriseId) : [];
+      if (!vivant) return;
+      setDepenses(liste);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
-  useEffect(() => {
-    if (pret) store.sauverDepenses(depenses);
-  }, [depenses, pret]);
-
-  // Agregation par le moteur (server action), debounce leger.
+  // Agregation d'affichage par le moteur (server action), debounce leger.
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
@@ -86,20 +101,45 @@ export function ChargesClient() {
   }, [depenses]);
 
   async function enregistrer(d: DepenseLocal) {
-    if (!d.libelle.trim()) return;
-    // Snapshot TTC de la ligne = moteur (jamais recalcule dans l'UI).
-    const r = await calculerDepensesAction([toInput(d)]);
-    const ttc = r.ok ? r.resultat.lignes[0]?.montantTTC ?? d.montantTTC : d.montantTTC;
-    const snapshot: DepenseLocal = { ...d, montantTTC: ttc };
-    setDepenses((prev) => {
-      if (snapshot.id) return prev.map((x) => (x.id === snapshot.id ? snapshot : x));
-      return [{ ...snapshot, id: genId() }, ...prev];
-    });
-    setEdition(null);
+    if (!d.libelle.trim() || !entrepriseId) return;
+    try {
+      // Le snapshot (TTC, TVA) est calcule par le moteur cote serveur (data-action).
+      const saved = await store.enregistrerDepense(entrepriseId, d);
+      setDepenses((prev) => (d.id ? prev.map((x) => (x.id === d.id ? saved : x)) : [saved, ...prev]));
+      setEdition(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setDepenses((prev) => prev.filter((d) => d.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerDepense(id);
+      setDepenses((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  // Rappel : une depense deja envoyee repasse en brouillon pour correction.
+  async function rappeler(id: string) {
+    try {
+      await rappelerAction("depenses", id);
+      setDepenses((prev) => prev.map((d) => (d.id === id ? { ...d, transmission: "brouillon" } : d)));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeading titre="Charges & Depenses" sousTitre="Saisie des depenses de l'entreprise." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour saisir ses charges.
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -113,6 +153,11 @@ export function ChargesClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Depenses (TTC)" value={fcfa(resultat?.totalTTC ?? 0)} icon="charges" />
@@ -158,22 +203,36 @@ export function ChargesClient() {
                       <td className="px-4 py-2.5 text-slate-600">{RECURRENCE_LABEL[d.recurrence]}</td>
                       <td className="px-4 py-2.5 text-right font-medium text-slate-800">{fcfa(d.montantTTC)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <div className="flex justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setEdition(d)}
-                            className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
-                          >
-                            Ouvrir
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => supprimer(d.id)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
-                            aria-label="Supprimer"
-                          >
-                            <Icon name="close" className="h-4 w-4" />
-                          </button>
+                        <div className="flex items-center justify-end gap-2">
+                          {estEntreprise && <BadgeTransmission etat={d.transmission} />}
+                          {estEntreprise && estEnvoye(d.transmission) ? (
+                            <button
+                              type="button"
+                              onClick={() => rappeler(d.id)}
+                              className="rounded-lg px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50"
+                              title="Repasser en brouillon pour corriger"
+                            >
+                              Rappeler
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setEdition(d)}
+                                className="rounded-lg px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50"
+                              >
+                                Ouvrir
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => supprimer(d.id)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                                aria-label="Supprimer"
+                              >
+                                <Icon name="close" className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>

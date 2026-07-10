@@ -6,12 +6,13 @@
  * L'UI COLLECTE les fournisseurs et leur solde du ; l'agregation des encours et
  * la ventilation echu / a echoir viennent de la server action -> moteur teste
  * (`calculerFournisseurs`). Le navigateur ne somme aucun montant lui-meme.
- * L'etat est persiste localement (localStorage) en attendant Supabase.
+ * L'etat est persiste dans Supabase (RLS, scope par entreprise active).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { calculerFournisseursAction } from "../../app/(app)/fournisseurs/actions";
 import type { ResultatFournisseurs } from "../../lib/engine";
-import { store, genId, type FournisseurLocal } from "../../lib/achats-stock-data";
+import { store, type FournisseurLocal } from "../../lib/achats-stock-data";
+import { useEntreprise } from "../../lib/entreprise-context";
 import { Card, PageHeading, StatTile } from "../ui";
 import { Icon } from "../icons";
 import { Field, Text, Num, Modal, BtnPrimary, BtnGhost } from "../ventes/form";
@@ -33,21 +34,30 @@ function vide(): FournisseurLocal {
 }
 
 export function FournisseursClient() {
+  const { active } = useEntreprise();
+  const entrepriseId = active?.id ?? "";
   const [fournisseurs, setFournisseurs] = useState<FournisseurLocal[]>([]);
   const [pret, setPret] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [resultat, setResultat] = useState<ResultatFournisseurs | null>(null);
   const [edition, setEdition] = useState<FournisseurLocal | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Chargement des fournisseurs de l'entreprise active (Supabase, RLS).
   useEffect(() => {
-    setFournisseurs(store.chargerFournisseurs());
-    setPret(true);
-  }, []);
-
-  useEffect(() => {
-    if (pret) store.sauverFournisseurs(fournisseurs);
-  }, [fournisseurs, pret]);
+    let vivant = true;
+    setPret(false);
+    (async () => {
+      const liste = entrepriseId ? await store.chargerFournisseurs(entrepriseId) : [];
+      if (!vivant) return;
+      setFournisseurs(liste);
+      setPret(true);
+    })();
+    return () => {
+      vivant = false;
+    };
+  }, [entrepriseId]);
 
   // Agregation des encours par le moteur (server action), debounce leger.
   useEffect(() => {
@@ -79,17 +89,35 @@ export function FournisseursClient() {
     );
   }, [fournisseurs, recherche]);
 
-  function enregistrer(f: FournisseurLocal) {
-    if (!f.nom.trim()) return;
-    setFournisseurs((prev) => {
-      if (f.id) return prev.map((x) => (x.id === f.id ? f : x));
-      return [{ ...f, id: genId() }, ...prev];
-    });
-    setEdition(null);
+  async function enregistrer(f: FournisseurLocal) {
+    if (!f.nom.trim() || !entrepriseId) return;
+    try {
+      const saved = await store.enregistrerFournisseur(entrepriseId, f);
+      setFournisseurs((prev) => (f.id ? prev.map((x) => (x.id === f.id ? saved : x)) : [saved, ...prev]));
+      setEdition(null);
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
   }
 
-  function supprimer(id: string) {
-    setFournisseurs((prev) => prev.filter((f) => f.id !== id));
+  async function supprimer(id: string) {
+    try {
+      await store.supprimerFournisseur(id);
+      setFournisseurs((prev) => prev.filter((f) => f.id !== id));
+    } catch (e) {
+      setErreur((e as Error).message);
+    }
+  }
+
+  if (!entrepriseId) {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeading titre="Fournisseurs" sousTitre="Repertoire fournisseurs, encours et echeances." />
+        <Card className="px-4 py-12 text-center text-sm text-slate-500">
+          Selectionnez d&apos;abord une entreprise pour gerer ses fournisseurs.
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -103,6 +131,11 @@ export function FournisseursClient() {
           </BtnPrimary>
         }
       />
+
+      {erreur && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{erreur}</div>
+      )}
+      {!pret && <div className="mb-4 text-sm text-slate-400">Chargement des donnees…</div>}
 
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Fournisseurs" value={fournisseurs.length} icon="fournisseurs" />

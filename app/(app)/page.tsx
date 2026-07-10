@@ -1,11 +1,29 @@
 import Link from "next/link";
 import { NAV_GROUPS, ALL_ITEMS } from "../../lib/nav";
 import { Icon } from "../../components/icons";
-import { Card, StatTile, StatutBadge, BoutonLien } from "../../components/ui";
+import { Card, StatTile, StatutBadge } from "../../components/ui";
 import { EntrepriseHomeBanner } from "../../components/EntrepriseHomeBanner";
 import { TableauBordComptable } from "../../components/dashboard/TableauBordComptable";
+import { PortefeuilleComptable } from "../../components/dashboard/PortefeuilleComptable";
+import { TableauBordEntreprise } from "../../components/dashboard/TableauBordEntreprise";
+import { creerClientServeur } from "../../lib/supabase/server";
 
-export default function DashboardHome() {
+export default async function DashboardHome() {
+  // Le tableau de bord depend du role : le comptable pilote et agrege ; l'utilisateur
+  // entreprise a un accueil simplifie oriente saisie.
+  const supabase = await creerClientServeur();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  let role = "comptable";
+  if (user) {
+    const { data } = await supabase.from("profil").select("role").eq("id", user.id).maybeSingle();
+    if (data?.role) role = data.role as string;
+  }
+  if (role === "entreprise") {
+    return <TableauBordEntreprise />;
+  }
+
   const modules = ALL_ITEMS.filter((i) => i.href !== "/");
   const actifs = modules.filter((m) => m.statut === "actif").length;
   const bientot = modules.filter((m) => m.statut === "bientot").length;
@@ -41,6 +59,9 @@ export default function DashboardHome() {
           </div>
         </div>
       </div>
+
+      {/* Vue d'ensemble : agregation des saisies de TOUTES les entreprises */}
+      <PortefeuilleComptable />
 
       {/* Tableau de bord du comptable : KPI + rapport de tresorerie (moteurs) */}
       <TableauBordComptable />
