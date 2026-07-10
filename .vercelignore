@@ -5,9 +5,12 @@
 .vercel
 node_modules
 coverage
-tests
+/tests
 
 # Ancien socle (remplace par l'app Next.js). Conserve dans le repo mais non
 # deploye : evite que Vercel traite api/ comme une fonction serverless a part.
-api
-web
+# IMPORTANT : ancrer a la racine avec "/". Sans le "/", "api" matcherait AUSSI
+# src/api/ (semantique gitignore : un pattern sans slash matche a toute
+# profondeur) -> src/api/ports.ts absent du build Vercel -> "Cannot find module".
+/api
+/web
